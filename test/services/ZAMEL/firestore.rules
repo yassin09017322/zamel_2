@@ -1,0 +1,108 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.role == 'admin';
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function noSensitiveUserFieldChanges() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isBanned', 'canPost']);
+    }
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId)
+        && request.resource.data.role == 'user'
+        && request.resource.data.isBanned == false
+        && request.resource.data.canPost == true;
+      allow update: if (isOwner(userId) && noSensitiveUserFieldChanges()) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /SystemAnnouncements/{announcementId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /posts/{postId} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isAdmin() || resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    match /posts/{postId}/comments/{commentId} {
+      allow read: if true;
+      allow create: if isSignedIn();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /Notifications/{notificationId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isAdmin() || resource.data.receiverId == request.auth.uid;
+      allow delete: if isAdmin() || resource.data.receiverId == request.auth.uid;
+    }
+
+    match /follows/{followId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isSignedIn();
+    }
+
+    match /friends/{friendId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isSignedIn();
+    }
+
+    match /presence/{userId} {
+      allow read: if isSignedIn();
+      allow create, update: if isOwner(userId) || isAdmin();
+    }
+
+    match /stories/{storyId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
+    }
+
+    match /chats/{chatId} {
+      allow read, create, update: if isSignedIn();
+    }
+
+    match /chats/{chatId}/messages/{messageId} {
+      allow read, create, update: if isSignedIn();
+    }
+
+    match /calls/{callId} {
+      allow read, create, update: if isSignedIn();
+    }
+
+    match /calls/{callId}/callerCandidates/{candidateId} {
+      allow read, create: if isSignedIn();
+    }
+
+    match /calls/{callId}/calleeCandidates/{candidateId} {
+      allow read, create: if isSignedIn();
+    }
+
+    match /bluetoothRelayQueue/{queueId} {
+      allow read: if isSignedIn() && (resource.data.senderId == request.auth.uid || resource.data.recipientId == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.senderId == request.auth.uid;
+      allow update: if isSignedIn() && (resource.data.senderId == request.auth.uid || resource.data.recipientId == request.auth.uid);
+    }
+
+    match /liveStreams/{streamId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn();
+    }
+  }
+}

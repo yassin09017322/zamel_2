@@ -1,0 +1,22 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Generate Isar code",
+			"type": "shell",
+			"command": "flutter pub get && flutter pub run build_runner build --delete-conflicting-outputs",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Analyze Flutter project",
+			"type": "shell",
+			"command": "flutter analyze",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [
+				"$flutter-analyze"
+			]
+		}
+	]
+}

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ZAMEL - النسخة المتطورة</title>
+    <link rel="manifest" href="manifest.json">
+    <script type="module" src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.esm.js">
+    </script>
+    <script nomodule src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.js">
+    </script>
+    <script>
+        window.__zamelServiceWorkerRegistered = false;
+        window.registerAppServiceWorker = function () {
+            if (window.__zamelServiceWorkerRegistered || !('serviceWorker' in navigator)) {
+                return;
+            }
+            window.__zamelServiceWorkerRegistered = true;
+            navigator.serviceWorker.register('./service-worker.js')
+                .then((registration) => {
+                    console.log('Service Worker registered', registration.scope);
+                    if (registration.waiting) {
+                        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                    }
+                })
+                .catch((error) => {
+                    console.warn('Service Worker registration failed:', error);
+                });
+        };
+        window.addEventListener('load', window.registerAppServiceWorker);
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js">
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+        /* ===== المتغيرات العامة ===== */
+        :root {
+            --primary: #0056b3;
+            --primary-light: #e6f0fa;
+            --bg-color: #f0f2f5;
+            --surface: #ffffff;
+            --text-main: #1c1e21;
+            --text-muted: #65676b;
+            --like-color: #e0245e;
+            --border-color: #e4e6eb;
+            --shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+            --toast-bg: #323232;
+            --input-bg: #f0f2f5;
+            --header-bg: #ffffff;
+            --nav-bg: #ffffff;
+            --modal-overlay: rgba(0, 0, 0, 0.5);
+            --story-border: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888);
+            --record-color: #ff4444;
+            --success: #4caf50;
+            --error: #f44336;
+            --whatsapp: #25d366;
+            --twitter: #1da1f2;
+            --facebook: #1877f2;
+            --reaction-bg: rgba(0, 0, 0, 0.7);
+            --card-radius: 16px;
+            --gold: #ffd700;
+            --platinum: #e5e4e2;
+            --diamond: #b9f2ff;
+            --stream-bg: #1a1a2e;
+            --shop-bg: #f9f3e8;
+        }
+        body.dark-mode {
+            --primary: #4a8dcf;
+            --primary-light: #1e3a5f;
+            --bg-color: #18191a;
+            --surface: #242526;
+            --text-main: #e4e6eb;
+            --text-muted: #b0b3b8;
+            --border-color: #3e4042;
+            --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+            --toast-bg: #3a3b3c;
+            --input-bg: #3a3b3c;
+            --header-bg: #242526;
+            --nav-bg: #242526;
+            --modal-overlay: rgba(0, 0, 0, 0.7);
+            --reaction-bg: rgba(255, 255, 255, 0.1);
+            --shop-bg: #2a2a2a;
+            --stream-bg: #0f0f1f;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            transition: background-color 0.3s, color 0.3s;
+        }
+
+        /* ===== شاشات المصادقة ===== */
+... (truncated for brevity) ...
