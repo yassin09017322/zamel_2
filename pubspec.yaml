@@ -114,5 +114,5 @@ flutter:
   # see https://flutter.dev/to/font-from-package
 
 dependency_overrides:
-  sqflite_android: 2.3.2
+  sqflite_android: 2.4.0
 
