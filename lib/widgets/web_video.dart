@@ -1,5 +1,6 @@
 // Web implementation using dart:html and platform view registry
 import 'dart:ui' as ui;
+// ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
 
 import 'package:flutter/material.dart';
@@ -33,17 +34,20 @@ class _WebVideoPlayerState extends State<WebVideoPlayer> {
       ui.platformViewRegistry.registerViewFactory(_viewType, (int viewId) {
         final video = html.VideoElement()
           ..src = widget.url
-          ..crossOrigin = 'anonymous'
           ..autoplay = widget.autoPlay
           ..loop = widget.loop
           ..muted = widget.muted
           ..controls = false
+          ..preload = 'auto'
           ..style.border = '0';
 
-        // try to play as early as possible
+        // Use setAttribute to ensure compatibility across dart:html bindings
+        video.setAttribute('playsinline', '');
+        video.setAttribute('crossorigin', 'anonymous');
+
         video.onError.listen((_) {
           // ignore: avoid_print
-          print('WebVideoPlayer: video error for ${widget.url}');
+          print('WebVideoPlayer: video error for ${widget.url} - errorCode=${video.error?.code}');
         });
 
         return video;

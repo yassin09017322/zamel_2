@@ -10,6 +10,10 @@ class Comment {
   final String publicId;
   final String type;
   final int duration;
+  final int mediaIndex;
+  final String replyToCommentId;
+  final String replyToUserId;
+  final String replyToUsername;
 
   Comment({
     required this.id,
@@ -21,6 +25,10 @@ class Comment {
     this.publicId = '',
     this.type = 'text',
     this.duration = 0,
+    this.mediaIndex = 0,
+    this.replyToCommentId = '',
+    this.replyToUserId = '',
+    this.replyToUsername = '',
   });
 
   factory Comment.fromFirestore(DocumentSnapshot<Map<String, dynamic>> snapshot) {
@@ -35,6 +43,13 @@ class Comment {
       date = DateTime.now();
     }
 
+    int parsedMediaIndex = 0;
+    if (data['mediaIndex'] is int) {
+      parsedMediaIndex = data['mediaIndex'] as int;
+    } else if (data['mediaIndex'] is num) {
+      parsedMediaIndex = (data['mediaIndex'] as num).toInt();
+    }
+
     return Comment(
       id: snapshot.id,
       userId: data['userId'] as String? ?? '',
@@ -45,6 +60,10 @@ class Comment {
       publicId: data['publicId'] as String? ?? '',
       type: data['type'] as String? ?? 'text',
       duration: data['duration'] is int ? data['duration'] as int : 0,
+      mediaIndex: parsedMediaIndex,
+      replyToCommentId: data['replyToCommentId'] as String? ?? '',
+      replyToUserId: data['replyToUserId'] as String? ?? '',
+      replyToUsername: data['replyToUsername'] as String? ?? '',
     );
   }
 }

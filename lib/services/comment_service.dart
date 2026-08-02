@@ -5,12 +5,17 @@ import '../models/comment.dart';
 class CommentService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  Stream<List<Comment>> commentsStream(String postId) {
-    final query = _firestore
+  Stream<List<Comment>> commentsStream(String postId, {int? mediaIndex}) {
+    Query<Map<String, dynamic>> query = _firestore
         .collection('posts')
         .doc(postId)
-        .collection('comments')
-        .orderBy('timestamp', descending: true);
+        .collection('comments');
+
+    if (mediaIndex != null) {
+      query = query.where('mediaIndex', isEqualTo: mediaIndex);
+    }
+
+    query = query.orderBy('timestamp', descending: true);
 
     return query.snapshots().map((snapshot) {
       return snapshot.docs.map((doc) => Comment.fromFirestore(doc)).toList();
@@ -26,6 +31,10 @@ class CommentService {
     String? publicId,
     String? type,
     int? duration,
+    int mediaIndex = 0,
+    String? replyToCommentId,
+    String? replyToUserId,
+    String? replyToUsername,
   }) async {
     await _firestore.collection('posts').doc(postId).collection('comments').add({
       'userId': userId,
@@ -35,6 +44,10 @@ class CommentService {
       'publicId': publicId,
       'type': type ?? 'text',
       'duration': duration ?? 0,
+      'mediaIndex': mediaIndex,
+      'replyToCommentId': replyToCommentId ?? '',
+      'replyToUserId': replyToUserId ?? '',
+      'replyToUsername': replyToUsername ?? '',
       'timestamp': FieldValue.serverTimestamp(),
     });
     await _firestore.collection('posts').doc(postId).update({

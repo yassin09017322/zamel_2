@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+import '../models/chat_message.dart';
 import 'chat_service.dart';
 
 class CallSession {
@@ -18,6 +19,9 @@ class CallSession {
   final RTCPeerConnection peerConnection;
   final MediaStream localStream;
   MediaStream? remoteStream;
+  String? callMessageId;
+  bool callMessageCreated = false;
+  bool isConnected = false;
   bool _isDisposed = false;
   DateTime? startedAt;
   DateTime? endedAt;
@@ -51,7 +55,7 @@ class CallSession {
   }
 
   void _updateStatus(String status) {
-    if (status == 'accepted' && startedAt == null) {
+    if (status == 'connected' && startedAt == null) {
       startedAt = DateTime.now();
     }
     if (status == 'ended' || status == 'rejected' || status == 'canceled') {
@@ -247,6 +251,20 @@ class CallService {
     );
 
     session.attachStreamListener();
+    peerConnection.onIceConnectionState = (RTCIceConnectionState state) async {
+      if (session.isConnected) return;
+      if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+          state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+        session.isConnected = true;
+        await updateCallStatus(callId: session.callId, status: 'connected');
+        if (session.isCaller) {
+          await _createCallHistoryMessage(
+            session: session,
+            text: session.type == 'video' ? 'بدء مكالمة فيديو' : 'بدء مكالمة صوتية',
+          );
+        }
+      }
+    };
 
     activeSession = session;
     return session;
@@ -303,16 +321,6 @@ class CallService {
       'offer': {'type': offer.type, 'sdp': offer.sdp},
       'timestamp': FieldValue.serverTimestamp(),
     });
-
-    await ChatService().sendMessage(
-      roomId: chatId,
-      senderId: callerId,
-      senderName: callerName,
-      receiverId: receiverId,
-      text: type == 'video' ? 'بدء مكالمة فيديو' : 'بدء مكالمة صوتية',
-      mediaType: 'call',
-      mediaUrl: '',
-    );
 
     _listenToCallUpdates(callDocRef.id);
     await _listenToRemoteCandidates(callDocRef.id, 'calleeCandidates');
@@ -473,6 +481,33 @@ class CallService {
           } catch (_) {}
         }
       }
+    });
+  }
+
+  Future<void> _createCallHistoryMessage({
+    required CallSession session,
+    required String text,
+    String status = MessageStatus.sent,
+  }) async {
+    if (session.callMessageCreated || session.callMessageId?.isNotEmpty == true) {
+      return;
+    }
+
+    final messageId = await ChatService().sendMessage(
+      roomId: session.chatId,
+      senderId: session.callerId,
+      senderName: session.callerName,
+      receiverId: session.receiverId,
+      text: text,
+      mediaType: 'call',
+      mediaUrl: '',
+      status: status,
+    );
+
+    session.callMessageId = messageId;
+    session.callMessageCreated = true;
+    await _firestore.collection('calls').doc(session.callId).update({
+      'messageId': messageId,
     });
   }
 

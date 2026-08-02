@@ -24,6 +24,41 @@ class UserService {
     });
   }
 
+  Stream<List<AppUser>> searchUsers(String query) {
+    final normalized = query.trim().toLowerCase();
+    if (normalized.isEmpty) {
+      return Stream.value(<AppUser>[]);
+    }
+
+    final startAt = normalized;
+    final endAt = '$normalized\uf8ff';
+    final queryRef = _firestore.collection('users').orderBy('username').startAt([startAt]).endAt([endAt]);
+
+    return queryRef.snapshots().map((snapshot) {
+      return snapshot.docs
+          .map((doc) => AppUser.fromFirestore(doc.data(), doc.id))
+          .where((user) => user.username.toLowerCase().contains(normalized))
+          .toList();
+    });
+  }
+
+  Future<List<AppUser>> usersByIds(List<String> ids) async {
+    if (ids.isEmpty) {
+      return <AppUser>[];
+    }
+
+    final results = <AppUser>[];
+    for (var offset = 0; offset < ids.length; offset += 10) {
+      final chunk = ids.sublist(offset, offset + 10 > ids.length ? ids.length : offset + 10);
+      final snapshot = await _firestore.collection('users').where(FieldPath.documentId, whereIn: chunk).get();
+      results.addAll(snapshot.docs.map((doc) => AppUser.fromFirestore(doc.data(), doc.id)));
+    }
+
+    final idOrder = {for (var i = 0; i < ids.length; i++) ids[i]: i};
+    results.sort((a, b) => (idOrder[a.id] ?? 0).compareTo(idOrder[b.id] ?? 0));
+    return results;
+  }
+
   Stream<AppUser?> userStream(String userId) {
     return _firestore.collection('users').doc(userId).snapshots().map((doc) {
       if (!doc.exists) return null;

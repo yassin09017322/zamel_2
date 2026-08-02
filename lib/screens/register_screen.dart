@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../l10n/app_localizations.dart';
 import '../services/auth_service.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -32,11 +33,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
+
+    if (l10n == null) {
+      return const Scaffold(body: SizedBox.shrink());
+    }
+
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: l10n.localeName == 'ar' ? TextDirection.rtl : TextDirection.ltr,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('تسجيل حساب جديد'),
+          title: Text(l10n.registerTitle),
           centerTitle: true,
         ),
         body: SafeArea(
@@ -48,20 +55,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 children: [
                   _buildInputField(
                     controller: _usernameController,
-                    label: 'اسم المستخدم',
+                    label: l10n.usernameLabel,
                     icon: Icons.person_outline,
                   ),
                   const SizedBox(height: 16),
                   _buildInputField(
                     controller: _emailController,
-                    label: 'البريد الإلكتروني',
+                    label: l10n.emailLabel,
                     icon: Icons.email_outlined,
                     keyboardType: TextInputType.emailAddress,
                   ),
                   const SizedBox(height: 16),
                   _buildInputField(
                     controller: _passwordController,
-                    label: 'كلمة المرور',
+                    label: l10n.passwordLabel,
                     icon: Icons.lock_outline,
                     obscureText: !_isPasswordVisible,
                     suffixIcon: IconButton(
@@ -72,7 +79,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: 16),
                   _buildInputField(
                     controller: _confirmPasswordController,
-                    label: 'تأكيد كلمة المرور',
+                    label: l10n.confirmPasswordLabel,
                     icon: Icons.lock_outline,
                     obscureText: !_isConfirmPasswordVisible,
                     suffixIcon: IconButton(
@@ -89,7 +96,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     child: _isSubmitting
                         ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('إنشاء الحساب', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        : Text(l10n.createAccountButton, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   ),
                   if (_errorMessage != null) ...[
                     const SizedBox(height: 16),
@@ -102,7 +109,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   const SizedBox(height: 16),
                   TextButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('لديك حساب بالفعل؟ تسجيل الدخول'),
+                    child: Text(l10n.registerAlreadyHaveAccount),
                   ),
                 ],
               ),
@@ -140,6 +147,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final password = _passwordController.text.trim();
     final confirmPassword = _confirmPasswordController.text.trim();
     final emailRegex = RegExp(r"^[^@\s]+@[^@\s]+\.[^@\s]+$");
+
+    final l10n = AppLocalizations.of(context);
+    if (l10n == null) {
+      setState(() => _errorMessage = '❌ حدث خطأ في الاتصال بالسيرفر');
+      return;
+    }
 
     if (username.length < 3) {
       setState(() => _errorMessage = '⚠️ اسم المستخدم يجب أن يكون ٣ أحرف على الأقل');

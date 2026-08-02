@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../l10n/app_localizations.dart';
 import '../providers/auth_provider.dart';
 import '../providers/engagement_provider.dart';
 
@@ -42,9 +43,16 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
     final engagement = context.watch<EngagementProvider>();
     final currentUser = context.watch<AuthProvider>().currentUser;
     final double progress = (engagement.points / 500.0).clamp(0.0, 1.0);
+    final l10n = AppLocalizations.of(context);
+
+    if (l10n == null) {
+      return const Scaffold(body: SizedBox.shrink());
+    }
+
+    final isLoggedIn = currentUser != null;
 
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: l10n.localeName == 'ar' ? TextDirection.rtl : TextDirection.ltr,
       child: Scaffold(
         appBar: PreferredSize(
           preferredSize: const Size.fromHeight(kToolbarHeight),
@@ -59,7 +67,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
             child: AppBar(
               backgroundColor: Colors.transparent,
               elevation: 0,
-              title: const Text('مختبر زامل', style: TextStyle(fontWeight: FontWeight.bold)),
+              title: Text(l10n.featureIdeasTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
               centerTitle: true,
             ),
           ),
@@ -69,36 +77,36 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
           children: [
             // أيقونة ترحيبية
-            const Center(
+            Center(
               child: Column(
                 children: [
-                  Icon(Icons.science_rounded, size: 48, color: Color(0xFF5B6CFF)),
-                  SizedBox(height: 8),
-                  Text('جرب الميزات الجديدة قبل الجميع', style: TextStyle(color: Colors.grey, fontSize: 14)),
+                  const Icon(Icons.science_rounded, size: 48, color: Color(0xFF5B6CFF)),
+                  const SizedBox(height: 8),
+                  Text(l10n.featureIdeasSubtitle, style: const TextStyle(color: Colors.grey, fontSize: 14)),
                 ],
               ),
             ),
             const SizedBox(height: 24),
 
             // 1. قسم الميزات التجريبية (Beta)
-            const Text('ميزات تجريبية (Beta)', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(l10n.featureIdeasBeta, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             Container(
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
               ),
               child: Column(
                 children: [
                   SwitchListTile(
-                    title: const Text('وضع التركيز', style: TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: const Text('كتم جميع الإشعارات أثناء جلسات المذاكرة'),
-                    activeColor: Colors.white,
+                    title: Text(l10n.featureIdeasFocusMode, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text(l10n.featureIdeasFocusModeSubtitle),
+                    activeThumbColor: Colors.white,
                     activeTrackColor: const Color(0xFF5B6CFF),
                     secondary: Container(
                       padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: const Color(0xFF5B6CFF).withOpacity(0.1), shape: BoxShape.circle),
+                      decoration: BoxDecoration(color: const Color(0xFF5B6CFF).withValues(alpha: 0.1), shape: BoxShape.circle),
                       child: const Icon(Icons.do_not_disturb_on_rounded, color: Color(0xFF5B6CFF)),
                     ),
                     value: _focusModeEnabled,
@@ -106,13 +114,13 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                   ),
                   Divider(height: 1, color: Colors.grey[200]),
                   SwitchListTile(
-                    title: const Text('الوضع السينمائي لأطياف', style: TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: const Text('تشغيل المقاطع بخلفية داكنة تماماً'),
-                    activeColor: Colors.white,
+                    title: Text(l10n.featureIdeasCinemaMode, style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text(l10n.featureIdeasCinemaModeSubtitle),
+                    activeThumbColor: Colors.white,
                     activeTrackColor: const Color(0xFF5B6CFF),
                     secondary: Container(
                       padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: const Color(0xFF5B6CFF).withOpacity(0.1), shape: BoxShape.circle),
+                      decoration: BoxDecoration(color: const Color(0xFF5B6CFF).withValues(alpha: 0.1), shape: BoxShape.circle),
                       child: const Icon(Icons.theaters_rounded, color: Color(0xFF5B6CFF)),
                     ),
                     value: _cinemaModeEnabled,
@@ -124,7 +132,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
             const SizedBox(height: 32),
 
             // 2. قسم مكافآت التفاعل
-            const Text('مكافآت التفاعل', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(l10n.featureIdeasRewards, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(16),
@@ -135,7 +143,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                   end: Alignment.bottomRight,
                 ),
                 borderRadius: BorderRadius.circular(16),
-                boxShadow: [BoxShadow(color: const Color(0xFF1DA1F2).withOpacity(0.3), blurRadius: 10, offset: const Offset(0, 4))],
+                boxShadow: [BoxShadow(color: const Color(0xFF1DA1F2).withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))],
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -147,12 +155,12 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                         child: Icon(Icons.verified, color: Color(0xFF1DA1F2)),
                       ),
                       const SizedBox(width: 12),
-                      const Expanded(
+                      Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('تفعيل علامة التوثيق', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                            Text('احصل على الشارة الزرقاء بجانب اسمك', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            Text(l10n.featureIdeasVerifyBadge, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                            Text(l10n.featureIdeasVerifyBadgeSubtitle, style: const TextStyle(color: Colors.white70, fontSize: 12)),
                           ],
                         ),
                       ),
@@ -165,10 +173,10 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                         ),
                         onPressed: engagement.points >= 500 ? () {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('تم إرسال طلب التوثيق للإدارة بنجاح 🎉'))
+                            SnackBar(content: Text(l10n.featureIdeasRequestSent))
                           );
                         } : null,
-                        child: Text(engagement.points >= 500 ? 'تفعيل الآن' : '500 نقطة'),
+                        child: Text(engagement.points >= 500 ? l10n.featureIdeasActivateNow : l10n.featureIdeasNeedPoints),
                       ),
                     ],
                   ),
@@ -183,7 +191,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                           child: LinearProgressIndicator(
                             value: progress,
                             minHeight: 8,
-                            backgroundColor: Colors.white.withOpacity(0.3),
+                            backgroundColor: Colors.white.withValues(alpha: 0.3),
                             valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
                           ),
                         ),
@@ -196,7 +204,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
             const SizedBox(height: 32),
 
             // 3. قسم التصويت التفاعلي المربوط بـ Firestore
-            const Text('صوّت للميزات القادمة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(l10n.featureIdeasVoteTitle, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
 
             StreamBuilder<QuerySnapshot>(
@@ -207,10 +215,10 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                 }
 
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return const Card(
+                  return Card(
                     child: Padding(
-                      padding: EdgeInsets.all(16.0),
-                      child: Text('لا توجد ميزات مطروحة للتصويت حالياً.', textAlign: TextAlign.center),
+                      padding: const EdgeInsets.all(16.0),
+                      child: Text(l10n.featureIdeasNoIdeas, textAlign: TextAlign.center),
                     ),
                   );
                 }
@@ -220,17 +228,18 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                 return Column(
                   children: docs.map((doc) {
                     final data = doc.data() as Map<String, dynamic>;
-                    final title = data['title'] ?? 'ميزة جديدة';
+                    final title = data['title'] ?? l10n.featureIdeasNewFeature;
                     final votes = data['votes'] ?? 0;
                     final votedUsers = List<String>.from(data['votedUsers'] ?? []);
-                    final isVoted = currentUser != null && votedUsers.contains(currentUser.id);
+                    final currentUserId = currentUser?.id;
+                    final isVoted = currentUserId != null && votedUsers.contains(currentUserId);
 
                     return Container(
                       margin: const EdgeInsets.only(bottom: 12),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(16),
-                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
+                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
                       ),
                       child: ListTile(
                         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -240,9 +249,9 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                           child: Text('$votes مستخدم يطالبون بهذه الميزة', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
                         ),
                         trailing: InkWell(
-                          onTap: currentUser == null
+                          onTap: !isLoggedIn || currentUserId == null
                               ? null
-                              : () => _toggleVote(doc.id, votedUsers, currentUser.id),
+                              : () => _toggleVote(doc.id, votedUsers, currentUserId),
                           borderRadius: BorderRadius.circular(20),
                           child: AnimatedContainer(
                             duration: const Duration(milliseconds: 300),
@@ -253,7 +262,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                                   : LinearGradient(colors: [Colors.grey[200]!, Colors.grey[200]!]),
                               borderRadius: BorderRadius.circular(24),
                               boxShadow: isVoted
-                                  ? [BoxShadow(color: const Color(0xFFE94057).withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 3))]
+                                  ? [BoxShadow(color: const Color(0xFFE94057).withValues(alpha: 0.3), blurRadius: 8, offset: const Offset(0, 3))]
                                   : [],
                             ),
                             child: Row(
@@ -266,7 +275,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
-                                  isVoted ? 'تم التصويت' : 'صوّت',
+                                  isVoted ? l10n.featureIdeasVoted : l10n.featureIdeasVote,
                                   style: TextStyle(
                                     color: isVoted ? Colors.white : Colors.grey[700],
                                     fontWeight: FontWeight.bold,

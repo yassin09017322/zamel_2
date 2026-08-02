@@ -13,10 +13,12 @@ class ChatMessageType {
 }
 
 class MessageStatus {
+  static const String pending = 'pending';
   static const String sent = 'sent';
   static const String delivered = 'delivered';
   static const String seen = 'seen';
   static const String read = 'read';
+  static const String failed = 'failed';
 }
 
 @Collection()
@@ -39,10 +41,18 @@ class ChatMessage {
   String fileType = '';
   int fileSize = 0;
   String receiverId = '';
+  String replyToMessageId = '';
+  String replyToSenderName = '';
+  String replyToMediaType = ChatMessageType.text;
+  String replyToText = '';
 
   String status = MessageStatus.sent;
   bool isPinned = false;
   bool isEdited = false;
+  bool isDisappearing = false;
+  int disappearingDurationSeconds = 0;
+  DateTime readAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime deleteAt = DateTime.fromMillisecondsSinceEpoch(0);
 
   @Index()
   DateTime timestamp = DateTime.now();
@@ -68,10 +78,29 @@ class ChatMessage {
       ..fileType = data['fileType'] as String? ?? ''
       ..fileSize = data['fileSize'] is int ? data['fileSize'] as int : 0
       ..receiverId = data['receiverId'] as String? ?? ''
+      ..replyToMessageId = data['replyToMessageId'] as String? ?? ''
+      ..replyToSenderName = data['replyToSenderName'] as String? ?? ''
+      ..replyToMediaType = data['replyToMediaType'] as String? ?? ChatMessageType.text
+      ..replyToText = data['replyToText'] as String? ?? ''
       ..status = data['status'] as String? ?? MessageStatus.sent
       ..isPinned = data['isPinned'] == true
       ..isEdited = data['isEdited'] == true
-      ..timestamp = _parseTimestamp(data['createdAt'] ?? data['timestamp']);
+      ..isDisappearing = data['isDisappearing'] == true
+      ..disappearingDurationSeconds = data['disappearingDurationSeconds'] is int
+          ? data['disappearingDurationSeconds'] as int
+          : 0
+      ..readAt = _parseTimestamp(
+        data['readAt'],
+        fallback: DateTime.fromMillisecondsSinceEpoch(0),
+      )
+      ..deleteAt = _parseTimestamp(
+        data['deleteAt'],
+        fallback: DateTime.fromMillisecondsSinceEpoch(0),
+      )
+      ..timestamp = _parseTimestamp(
+        data['createdAt'] ?? data['timestamp'],
+        fallback: DateTime.now(),
+      );
 
     return message;
   }
@@ -90,10 +119,29 @@ class ChatMessage {
     message.fileType = json['fileType'] as String? ?? '';
     message.fileSize = json['fileSize'] is int ? json['fileSize'] as int : 0;
     message.receiverId = json['receiverId'] as String? ?? '';
+    message.replyToMessageId = json['replyToMessageId'] as String? ?? '';
+    message.replyToSenderName = json['replyToSenderName'] as String? ?? '';
+    message.replyToMediaType = json['replyToMediaType'] as String? ?? ChatMessageType.text;
+    message.replyToText = json['replyToText'] as String? ?? '';
     message.status = json['status'] as String? ?? MessageStatus.sent;
     message.isPinned = json['isPinned'] == true;
     message.isEdited = json['isEdited'] == true;
-    message.timestamp = _parseTimestamp(json['timestamp']);
+    message.isDisappearing = json['isDisappearing'] == true;
+    message.disappearingDurationSeconds = json['disappearingDurationSeconds'] is int
+        ? json['disappearingDurationSeconds'] as int
+        : 0;
+    message.readAt = _parseTimestamp(
+      json['readAt'],
+      fallback: DateTime.fromMillisecondsSinceEpoch(0),
+    );
+    message.deleteAt = _parseTimestamp(
+      json['deleteAt'],
+      fallback: DateTime.fromMillisecondsSinceEpoch(0),
+    );
+    message.timestamp = _parseTimestamp(
+      json['timestamp'],
+      fallback: DateTime.now(),
+    );
     return message;
   }
 
@@ -111,9 +159,17 @@ class ChatMessage {
       'fileType': fileType,
       'fileSize': fileSize,
       'receiverId': receiverId,
+      'replyToMessageId': replyToMessageId,
+      'replyToSenderName': replyToSenderName,
+      'replyToMediaType': replyToMediaType,
+      'replyToText': replyToText,
       'status': status,
       'isPinned': isPinned,
       'isEdited': isEdited,
+      'isDisappearing': isDisappearing,
+      'disappearingDurationSeconds': disappearingDurationSeconds,
+      'readAt': readAt.toUtc().toIso8601String(),
+      'deleteAt': deleteAt.toUtc().toIso8601String(),
       'timestamp': timestamp.toUtc().toIso8601String(),
     };
   }
@@ -130,15 +186,34 @@ class ChatMessage {
       'fileType': fileType,
       'fileSize': fileSize,
       'receiverId': receiverId,
+      'replyToMessageId': replyToMessageId,
+      'replyToSenderName': replyToSenderName,
+      'replyToMediaType': replyToMediaType,
+      'replyToText': replyToText,
       'status': status,
       'isPinned': isPinned,
       'isEdited': isEdited,
+      'isDisappearing': isDisappearing,
+      'disappearingDurationSeconds': disappearingDurationSeconds,
+      if (isDisappearing && disappearingDurationSeconds > 0) ...{
+        'readAt': readAt == DateTime.fromMillisecondsSinceEpoch(0)
+            ? null
+            : Timestamp.fromDate(readAt),
+        'deleteAt': deleteAt == DateTime.fromMillisecondsSinceEpoch(0)
+            ? null
+            : Timestamp.fromDate(deleteAt),
+      },
       'createdAt': Timestamp.fromDate(timestamp),
       'timestamp': Timestamp.fromDate(timestamp),
     };
   }
 
-  static DateTime _parseTimestamp(dynamic value) {
+  static DateTime _parseTimestamp(
+    dynamic value, {
+    DateTime? fallback,
+  }) {
+    final resolvedFallback = fallback ?? DateTime.fromMillisecondsSinceEpoch(0);
+
     if (value is Timestamp) {
       return value.toDate();
     }
@@ -149,9 +224,9 @@ class ChatMessage {
       try {
         return DateTime.parse(value);
       } catch (_) {
-        return DateTime.now();
+        return resolvedFallback;
       }
     }
-    return DateTime.now();
+    return resolvedFallback;
   }
 }

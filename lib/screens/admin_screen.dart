@@ -2,7 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../l10n/app_localizations.dart';
 import '../providers/auth_provider.dart';
+import '../services/post_service.dart';
 
 class AdminScreen extends StatefulWidget {
   const AdminScreen({super.key});
@@ -25,7 +27,7 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   Future<void> _deletePost(String postId) async {
-    await FirebaseFirestore.instance.collection('posts').doc(postId).delete();
+    await PostService.deletePost(postId: postId);
   }
 
   Future<void> _deleteStory(String storyId) async {
@@ -36,18 +38,23 @@ class _AdminScreenState extends State<AdminScreen> {
   Widget build(BuildContext context) {
     final authProvider = context.watch<AuthProvider>();
     final currentUser = authProvider.currentUser;
+    final l10n = AppLocalizations.of(context);
+
+    if (l10n == null) {
+      return const Scaffold(body: SizedBox.shrink());
+    }
 
     if (currentUser == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('لوحة الإدارة')),
-        body: const Center(child: Text('الرجاء تسجيل الدخول للوصول إلى لوحة الإدارة.')),
+        appBar: AppBar(title: Text(l10n.adminTitle)),
+        body: Center(child: Text(l10n.adminLoginRequired)),
       );
     }
 
     if (currentUser.role != 'admin') {
       return Scaffold(
-        appBar: AppBar(title: const Text('لوحة الإدارة')),
-        body: const Center(child: Text('عذراً، هذه الصفحة متاحة للمشرفين فقط.')),
+        appBar: AppBar(title: Text(l10n.adminTitle)),
+        body: Center(child: Text(l10n.adminRoleRequired)),
       );
     }
 
@@ -59,13 +66,13 @@ class _AdminScreenState extends State<AdminScreen> {
       length: 3,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('لوحة الإدارة'),
+          title: Text(l10n.adminTitle),
           centerTitle: true,
-          bottom: const TabBar(
+          bottom: TabBar(
             tabs: [
-              Tab(text: 'المستخدمون'),
-              Tab(text: 'المنشورات'),
-              Tab(text: 'القصص'),
+              Tab(text: l10n.adminUsersTab),
+              Tab(text: l10n.adminPostsTab),
+              Tab(text: l10n.adminStoriesTab),
             ],
           ),
         ),
@@ -78,11 +85,11 @@ class _AdminScreenState extends State<AdminScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
-                  return Center(child: Text('حدث خطأ في جلب المستخدمين: ${snapshot.error}'));
+                  return Center(child: Text(l10n.adminErrorUsers(snapshot.error.toString())));
                 }
                 final docs = snapshot.data?.docs ?? [];
                 if (docs.isEmpty) {
-                  return const Center(child: Text('لا يوجد مستخدمين حتى الآن.'));
+                  return Center(child: Text(l10n.adminNoUsers));
                 }
 
                 return ListView.separated(
@@ -139,10 +146,10 @@ class _AdminScreenState extends State<AdminScreen> {
                             Wrap(
                               spacing: 8,
                               children: [
-                                Chip(label: Text('متابعين ${followers.length}')),
-                                Chip(label: Text('نقاط $points')),
-                                if (!canPost) Chip(label: const Text('ممنوع من النشر'), backgroundColor: Colors.orange.shade100),
-                                if (isBanned) Chip(label: const Text('محظور'), backgroundColor: Colors.red.shade100),
+                                Chip(label: Text(l10n.adminFollowers(followers.length))),
+                                Chip(label: Text(l10n.adminPoints(points))),
+                                if (!canPost) Chip(label: Text(l10n.adminBlockedFromPosting), backgroundColor: Colors.orange.shade100),
+                                if (isBanned) Chip(label: Text(l10n.adminBanned), backgroundColor: Colors.red.shade100),
                               ],
                             ),
                             const SizedBox(height: 12),
@@ -156,11 +163,12 @@ class _AdminScreenState extends State<AdminScreen> {
                                     onPressed: () async {
                                       await _toggleBan(userId, !isBanned);
                                       if (!mounted) return;
+                                      if (!context.mounted) return;
                                       ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(content: Text(isBanned ? 'تم رفع الحظر عن المستخدم' : 'تم حظر المستخدم')),
+                                        SnackBar(content: Text(isBanned ? l10n.adminUserUnbanSuccess : l10n.adminUserBanSuccess)),
                                       );
                                     },
-                                    child: Text(isBanned ? 'رفع الحظر' : 'حظر المستخدم'),
+                                    child: Text(isBanned ? l10n.adminUnbanUser : l10n.adminBanUser),
                                   ),
                                 ),
                                 const SizedBox(width: 10),
@@ -169,11 +177,12 @@ class _AdminScreenState extends State<AdminScreen> {
                                     onPressed: () async {
                                       await _togglePosting(userId, !canPost);
                                       if (!mounted) return;
+                                      if (!context.mounted) return;
                                       ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(content: Text(canPost ? 'تم تعطيل النشر عن المستخدم' : 'تم تفعيل النشر للمستخدم')),
+                                        SnackBar(content: Text(canPost ? l10n.adminPostingDisabled : l10n.adminPostingEnabled)),
                                       );
                                     },
-                                    child: Text(canPost ? 'تعطيل النشر' : 'تفعيل النشر'),
+                                    child: Text(canPost ? l10n.adminDisablePosting : l10n.adminEnablePosting),
                                   ),
                                 ),
                                 const SizedBox(width: 10),
@@ -182,11 +191,12 @@ class _AdminScreenState extends State<AdminScreen> {
                                     onPressed: () async {
                                       await _toggleAdmin(userId, role != 'admin');
                                       if (!mounted) return;
+                                      if (!context.mounted) return;
                                       ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(content: Text(role != 'admin' ? 'تم ترقية المستخدم إلى مشرف' : 'تم خفض المستخدم إلى مستخدم عادي')),
+                                        SnackBar(content: Text(role != 'admin' ? l10n.adminPromoted : l10n.adminDemoted)),
                                       );
                                     },
-                                    child: Text(role != 'admin' ? 'ترقية' : 'خفض رتبة'),
+                                    child: Text(role != 'admin' ? l10n.adminUpgrade : l10n.adminDowngrade),
                                   ),
                                 ),
                               ],
@@ -206,11 +216,11 @@ class _AdminScreenState extends State<AdminScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
-                  return Center(child: Text('حدث خطأ في جلب المنشورات: ${snapshot.error}'));
+                  return Center(child: Text(l10n.adminErrorPosts(snapshot.error.toString())));
                 }
                 final docs = snapshot.data?.docs ?? [];
                 if (docs.isEmpty) {
-                  return const Center(child: Text('لا توجد منشورات حتى الآن.'));
+                  return Center(child: Text(l10n.adminNoPosts));
                 }
                 return ListView.separated(
                   padding: const EdgeInsets.all(12),
@@ -262,6 +272,7 @@ class _AdminScreenState extends State<AdminScreen> {
                                     onPressed: () async {
                                       await _deletePost(postId);
                                       if (!mounted) return;
+                                      if (!context.mounted) return;
                                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف المنشور')));
                                     },
                                   ),
@@ -283,11 +294,11 @@ class _AdminScreenState extends State<AdminScreen> {
                   return const Center(child: CircularProgressIndicator());
                 }
                 if (snapshot.hasError) {
-                  return Center(child: Text('حدث خطأ في جلب القصص: ${snapshot.error}'));
+                  return Center(child: Text(l10n.adminErrorStories(snapshot.error.toString())));
                 }
                 final docs = snapshot.data?.docs ?? [];
                 if (docs.isEmpty) {
-                  return const Center(child: Text('لا توجد قصص حتى الآن.'));
+                  return Center(child: Text(l10n.adminNoStories));
                 }
                 return ListView.separated(
                   padding: const EdgeInsets.all(12),
@@ -333,6 +344,7 @@ class _AdminScreenState extends State<AdminScreen> {
                               onPressed: () async {
                                 await _deleteStory(storyId);
                                 if (!mounted) return;
+                                if (!context.mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف القصة')));
                               },
                             ),

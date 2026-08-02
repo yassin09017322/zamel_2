@@ -52,12 +52,12 @@ class _CallScreenState extends State<CallScreen> {
     _statusSubscription = widget.session.statusStream.listen((status) {
       if (!mounted) return;
       final normalized = status.toLowerCase();
-      if (normalized == 'accepted') {
+      if (normalized == 'connected') {
         _stopRingtone();
         setState(() {
           _connectionStatus = 'متصل';
         });
-      } else if (normalized == 'calling' || normalized == 'ringing') {
+      } else if (normalized == 'calling' || normalized == 'ringing' || normalized == 'accepted') {
         _playRingtone();
         setState(() {
           _connectionStatus = 'جارٍ الاتصال...';

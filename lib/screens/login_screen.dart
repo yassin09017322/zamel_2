@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart' hide AuthProvider;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../l10n/app_localizations.dart';
 import '../providers/auth_provider.dart';
 import '../services/auth_service.dart';
 
@@ -30,9 +31,14 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final authProvider = context.watch<AuthProvider>();
     final isBusy = _isSubmitting || authProvider.isLoading;
+    final l10n = AppLocalizations.of(context);
+
+    if (l10n == null) {
+      return const Scaffold(body: SizedBox.shrink());
+    }
 
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: l10n.localeName == 'ar' ? TextDirection.rtl : TextDirection.ltr,
       child: Scaffold(
         body: SafeArea(
           child: Padding(
@@ -48,22 +54,22 @@ class _LoginScreenState extends State<LoginScreen> {
                     style: TextStyle(fontSize: 34, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'تسجيل الدخول إلى حسابك',
+                  Text(
+                    l10n.loginTitle,
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 16, color: Colors.black54),
                   ),
                   const SizedBox(height: 40),
                   _buildInputField(
                     controller: _emailController,
-                    label: 'البريد الإلكتروني',
+                    label: l10n.emailLabel,
                     icon: Icons.email_outlined,
                     keyboardType: TextInputType.emailAddress,
                   ),
                   const SizedBox(height: 16),
                   _buildInputField(
                     controller: _passwordController,
-                    label: 'كلمة المرور',
+                    label: l10n.passwordLabel,
                     icon: Icons.lock_outline,
                     obscureText: !_isPasswordVisible,
                     suffixIcon: IconButton(
@@ -76,7 +82,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     alignment: Alignment.centerLeft,
                     child: TextButton(
                       onPressed: isBusy ? null : () => _showResetPasswordDialog(context),
-                      child: const Text('نسيت كلمة المرور؟'),
+                      child: Text(l10n.forgotPassword),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -85,14 +91,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
                     child: isBusy
                         ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('تسجيل الدخول', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        : Text(l10n.loginButton, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   ),
                   if (_errorMessage != null) ...[
                     const SizedBox(height: 16),
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.red.withOpacity(0.1),
+                        color: Colors.red.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Text(
@@ -105,7 +111,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 24),
                   TextButton(
                     onPressed: isBusy ? null : () => Navigator.of(context).pushNamed('/registration'),
-                    child: const Text('ليس لديك حساب؟ سجّل الآن'),
+                    child: Text(l10n.loginSignUpPrompt),
                   ),
                 ],
               ),
@@ -140,15 +146,21 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _login(BuildContext context) async {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
+    final l10n = AppLocalizations.of(context);
+
+    if (l10n == null) {
+      setState(() => _errorMessage = 'Please enter a valid email address');
+      return;
+    }
 
     final emailRegex = RegExp(r"^[^@\s]+@[^@\s]+\.[^@\s]+$");
     if (email.isEmpty || !emailRegex.hasMatch(email)) {
-      setState(() => _errorMessage = 'الرجاء إدخال بريد إلكتروني صحيح');
+      setState(() => _errorMessage = l10n.loginInvalidEmail);
       return;
     }
 
     if (password.isEmpty || password.length < 6) {
-      setState(() => _errorMessage = 'الرجاء إدخال كلمة مرور صحيحة (٦ أحرف على الأقل)');
+      setState(() => _errorMessage = l10n.loginInvalidPassword);
       return;
     }
 
@@ -176,26 +188,31 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _showResetPasswordDialog(BuildContext context) async {
     final emailDialogController = TextEditingController(text: _emailController.text);
-    
+    final l10n = AppLocalizations.of(context);
+
+    if (l10n == null) {
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) {
         return Directionality(
           textDirection: TextDirection.rtl,
           child: AlertDialog(
-            title: const Text('استعادة كلمة المرور'),
+            title: Text(l10n.loginResetPasswordTitle),
             content: TextField(
               controller: emailDialogController,
               keyboardType: TextInputType.emailAddress,
-              decoration: const InputDecoration(
-                labelText: 'البريد الإلكتروني',
-                hintText: 'أدخل بريدك المسجل لدينا',
+              decoration: InputDecoration(
+                labelText: l10n.emailLabel,
+                hintText: l10n.loginResetPasswordHint,
               ),
             ),
             actions: [
               TextButton(
                 onPressed: Navigator.of(context).pop,
-                child: const Text('إلغاء'),
+                child: Text(l10n.loginResetPasswordCancel),
               ),
               ElevatedButton(
                 onPressed: () async {
@@ -203,7 +220,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   final emailRegex = RegExp(r"^[^@\s]+@[^@\s]+\.[^@\s]+$");
                   if (email.isEmpty || !emailRegex.hasMatch(email)) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('الرجاء إدخال بريد إلكتروني صالح'), backgroundColor: Colors.orange),
+                      SnackBar(content: Text(l10n.loginInvalidEmail), backgroundColor: Colors.orange),
                     );
                     return;
                   }
@@ -218,8 +235,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     await _authService.resetPassword(email: email);
                     if (!mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('✅ تم إرسال رابط استعادة كلمة المرور إلى بريدك. (تفقد صندوق الوارد والبريد العشوائي)'),
+                      SnackBar(
+                        content: Text(l10n.loginResetPasswordSuccess),
                         backgroundColor: Colors.green,
                         duration: Duration(seconds: 4),
                       ),
@@ -246,7 +263,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     }
                   }
                 },
-                child: const Text('إرسال الرابط'),
+                child: Text(l10n.loginResetPasswordSend),
               ),
             ],
           ),

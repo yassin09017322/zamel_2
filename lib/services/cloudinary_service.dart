@@ -1,5 +1,5 @@
 import 'dart:convert';
-// file parameter is dynamic now; no direct File import required here
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -41,6 +41,27 @@ class CloudinaryService {
     }
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     return body['secure_url'] as String;
+  }
+
+  Future<String?> uploadSticker(File imageFile) async {
+    try {
+      var uri = Uri.parse('https://api.cloudinary.com/v1_1/ggvpugii/image/upload');
+      var request = http.MultipartRequest('POST', uri);
+      
+      request.fields['upload_preset'] = 'yassin_upload';
+      request.files.add(await http.MultipartFile.fromPath('file', imageFile.path));
+
+      var response = await request.send();
+      
+      if (response.statusCode == 200) {
+        var responseData = await response.stream.bytesToString();
+        var jsonResponse = json.decode(responseData);
+        return jsonResponse['secure_url']; 
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
   }
 
   /// Upload raw bytes (useful on web where files are provided as bytes).

@@ -1,14 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart' as firestore;
-import 'package:firebase_core/firebase_core.dart' as firebase_core;
-import 'package:cloud_firestore/cloud_firestore.dart' as firestore;
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:firebase_core/firebase_core.dart' as firebase_core;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
+import 'package:timeago/timeago.dart' as timeago;
 
 import 'config.dart';
+import 'l10n/app_localizations.dart';
 import 'firebase_options.dart';
 import 'providers/atyaaf_provider.dart';
 import 'providers/auth_provider.dart';
@@ -27,6 +27,7 @@ import 'services/local_storage_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  timeago.setLocaleMessages('ar', timeago.ArMessages());
 
   try {
     await firebase_core.Firebase.initializeApp(
@@ -143,11 +144,12 @@ class ZamelApp extends StatelessWidget {
             ),
             themeMode: settingsProvider.darkMode ? ThemeMode.dark : ThemeMode.light,
             localizationsDelegates: const [
+              AppLocalizations.delegate,
               GlobalMaterialLocalizations.delegate,
               GlobalWidgetsLocalizations.delegate,
               GlobalCupertinoLocalizations.delegate,
             ],
-            supportedLocales: const [Locale('ar'), Locale('en')],
+            supportedLocales: AppLocalizations.supportedLocales,
             locale: settingsProvider.locale,
             routes: {
               '/admin': (_) => const AdminScreen(),

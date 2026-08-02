@@ -20,12 +20,23 @@ class PostService {
     required String mediaData,
     String privacy = 'public',
     String? publicId,
+    String resourceType = 'auto',
   }) async {
     try {
       List<String> hashtags = [];
       if (text.isNotEmpty) {
         final regex = RegExp(r'#\w+');
         hashtags = regex.allMatches(text).map((m) => m.group(0)!.substring(1)).toList();
+      }
+
+      final mediaFiles = <Map<String, dynamic>>[];
+      if (mediaType != 'none' && mediaData.isNotEmpty) {
+        mediaFiles.add({
+          'mediaType': mediaType,
+          'url': mediaData,
+          'publicId': publicId ?? '',
+          'resourceType': resourceType,
+        });
       }
 
       await _firestore.collection('posts').add({
@@ -37,6 +48,7 @@ class PostService {
         'mediaType': mediaType,
         'mediaData': mediaData,
         'publicId': publicId ?? '',
+        'mediaFiles': mediaFiles,
         'timestamp': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
         'commentsCount': 0,
@@ -106,13 +118,48 @@ class PostService {
     await addReaction(postId: postId, userId: userId, reactionType: reactionType);
   }
 
-  static Future<void> deletePost({required String postId, String? publicId}) async {
+  static Future<void> deletePost({required String postId, List<String>? publicIds}) async {
     try {
-      await _firestore.collection('posts').doc(postId).delete();
+      final docRef = _firestore.collection('posts').doc(postId);
+      final snapshot = await docRef.get();
+      if (!snapshot.exists) {
+        return;
+      }
 
-      if (publicId != null && publicId.isNotEmpty) {
+      final data = snapshot.data() ?? <String, dynamic>{};
+      final fallbackPublicId = data['publicId'] as String? ?? '';
+      final resolvedPublicIds = <String>[];
+      if (publicIds != null) {
+        resolvedPublicIds.addAll(publicIds.where((id) => id.isNotEmpty));
+      }
+
+      if (resolvedPublicIds.isEmpty) {
+        if (data['mediaFiles'] is List) {
+          for (final rawItem in data['mediaFiles'] as List<dynamic>) {
+            if (rawItem is Map<String, dynamic>) {
+              final filePublicId = rawItem['publicId'] as String? ?? '';
+              if (filePublicId.isNotEmpty) {
+                resolvedPublicIds.add(filePublicId);
+              }
+            } else if (rawItem is Map) {
+              final filePublicId = rawItem['publicId']?.toString() ?? '';
+              if (filePublicId.isNotEmpty) {
+                resolvedPublicIds.add(filePublicId);
+              }
+            }
+          }
+        }
+        if (resolvedPublicIds.isEmpty && fallbackPublicId.isNotEmpty) {
+          resolvedPublicIds.add(fallbackPublicId);
+        }
+      }
+
+      await docRef.delete();
+
+      for (final id in resolvedPublicIds) {
+        if (id.isEmpty) continue;
         try {
-          await deleteCloudinaryAsset(publicId);
+          await deleteCloudinaryAsset(id);
         } catch (error) {
           debugPrint('Failed to delete Cloudinary asset: $error');
         }

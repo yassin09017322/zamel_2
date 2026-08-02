@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class SettingsProvider extends ChangeNotifier {
   bool _darkMode = false;
   String _languageCode = 'ar';
+  bool _isInitialized = false;
   bool _soundNotifications = true;
   bool _autoRefresh = true;
   bool _privateMode = false;
@@ -12,6 +13,7 @@ class SettingsProvider extends ChangeNotifier {
 
   bool get darkMode => _darkMode;
   Locale get locale => Locale(_languageCode);
+  bool get isInitialized => _isInitialized;
   bool get soundNotifications => _soundNotifications;
   bool get autoRefresh => _autoRefresh;
   bool get privateMode => _privateMode;
@@ -26,7 +28,20 @@ class SettingsProvider extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       _darkMode = prefs.getBool('darkMode') ?? false;
-      _languageCode = prefs.getString('languageCode') ?? 'ar';
+      final storedLanguageCode = prefs.getString('languageCode');
+      if (storedLanguageCode != null && (storedLanguageCode == 'ar' || storedLanguageCode == 'en' || storedLanguageCode == 'fr' || storedLanguageCode == 'de' || storedLanguageCode == 'es' || storedLanguageCode == 'tr')) {
+        _languageCode = storedLanguageCode;
+      } else {
+        final deviceLocale = WidgetsBinding.instance.platformDispatcher.locale.languageCode;
+        _languageCode = switch (deviceLocale) {
+          'en' => 'en',
+          'fr' => 'fr',
+          'de' => 'de',
+          'es' => 'es',
+          'tr' => 'tr',
+          _ => 'ar',
+        };
+      }
       _soundNotifications = prefs.getBool('soundNotifications') ?? true;
       _autoRefresh = prefs.getBool('autoRefresh') ?? true;
       _privateMode = prefs.getBool('privateMode') ?? false;
@@ -41,6 +56,7 @@ class SettingsProvider extends ChangeNotifier {
       _compactMode = false;
       _sharePresence = true;
     }
+    _isInitialized = true;
     notifyListeners();
   }
 
@@ -54,6 +70,9 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> setLanguage(String languageCode) async {
+    if (languageCode != 'ar' && languageCode != 'en' && languageCode != 'fr' && languageCode != 'de' && languageCode != 'es' && languageCode != 'tr') {
+      return;
+    }
     _languageCode = languageCode;
     notifyListeners();
     try {
@@ -110,6 +129,7 @@ class SettingsProvider extends ChangeNotifier {
   Future<void> resetSettings() async {
     _darkMode = false;
     _languageCode = 'ar';
+    _isInitialized = true;
     _soundNotifications = true;
     _autoRefresh = true;
     _privateMode = false;

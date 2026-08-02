@@ -1,6 +1,7 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:timeago/timeago.dart' as timeago;
 
 import '../models/chat_room.dart';
 import '../providers/auth_provider.dart';
@@ -80,19 +81,17 @@ class _ChatScreenState extends State<ChatScreen> {
                 tileColor: Colors.grey[100],
                 title: Text(otherName.isNotEmpty ? otherName : 'محادثة'),
                 subtitle: otherUserId.isNotEmpty
-                    ? StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                        stream: FirebaseFirestore.instance.collection('users').doc(otherUserId).snapshots(),
+                    ? StreamBuilder<DatabaseEvent>(
+                        stream: FirebaseDatabase.instance.ref().child('presence/$otherUserId').onValue,
                         builder: (context, snapshot) {
-                          final data = snapshot.data?.data() ?? <String, dynamic>{};
+                          final data = snapshot.data?.snapshot.value as Map<dynamic, dynamic>? ?? <dynamic, dynamic>{};
                           final settingsProvider = context.watch<SettingsProvider>();
                           final sharePresence = settingsProvider.sharePresence;
-                          final online = data['isOnline'] == true;
+                          final online = data['online'] == true;
                           DateTime? lastSeen;
                           final lastSeenValue = data['lastSeen'];
-                          if (lastSeenValue is Timestamp) {
-                            lastSeen = lastSeenValue.toDate();
-                          } else if (lastSeenValue is DateTime) {
-                            lastSeen = lastSeenValue;
+                          if (lastSeenValue is int) {
+                            lastSeen = DateTime.fromMillisecondsSinceEpoch(lastSeenValue);
                           }
                           final statusText = sharePresence
                               ? (online ? 'متصل الآن' : _formatLastSeen(lastSeen))
@@ -138,11 +137,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (timestamp == null) {
       return 'آخر ظهور: غير متاح';
     }
-    final difference = DateTime.now().difference(timestamp);
-    if (difference.inMinutes < 1) return 'آخر ظهور الآن';
-    if (difference.inHours < 1) return 'آخر ظهور منذ ${difference.inMinutes} د';
-    if (difference.inDays < 1) return 'آخر ظهور منذ ${difference.inHours} س';
-    return 'آخر ظهور منذ ${difference.inDays} يوم';
+    return 'آخر ظهور ${timeago.format(timestamp, locale: 'ar', clock: DateTime.now())}';
   }
 
   String _formatTime(DateTime date) {

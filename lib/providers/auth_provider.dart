@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import '../models/app_user.dart';
 import '../services/auth_service.dart';
@@ -166,14 +167,22 @@ class AuthProvider extends ChangeNotifier {
     if (currentUser == null) return;
 
     try {
-      final data = <String, Object?>{
-        'isOnline': online,
-      };
-      if (!online) {
-        data['lastSeen'] = FieldValue.serverTimestamp();
-      }
-      await firestore.collection('users').doc(currentUser!.id).update(data);
-      currentUser = currentUser!.copyWith(isOnline: online, lastSeen: online ? currentUser!.lastSeen : DateTime.now());
+      final presenceRef = FirebaseDatabase.instance.ref().child('presence/${currentUser!.id}');
+
+      await presenceRef.onDisconnect().set({
+        'online': false,
+        'lastSeen': ServerValue.timestamp,
+      });
+
+      await presenceRef.set({
+        'online': online,
+        'lastSeen': ServerValue.timestamp,
+      });
+
+      currentUser = currentUser!.copyWith(
+        isOnline: online,
+        lastSeen: online ? currentUser!.lastSeen : DateTime.now(),
+      );
       notifyListeners();
     } catch (_) {
       // ignore errors silently

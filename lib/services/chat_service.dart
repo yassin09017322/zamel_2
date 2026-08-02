@@ -5,6 +5,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/chat_room.dart';
+import '../models/chat_message.dart';
 import '../models/message.dart';
 
 class ChatService {
@@ -54,12 +55,13 @@ class ChatService {
     return newRoom.id;
   }
 
-  Future<void> sendMessage({
+  Future<String> sendMessage({
     required String roomId,
     required String senderId,
     required String senderName,
     required String text,
     required String receiverId,
+    String messageId = '',
     String mediaType = 'text',
     String mediaUrl = '',
     String publicId = '',
@@ -67,6 +69,12 @@ class ChatService {
     String fileType = '',
     int fileSize = 0,
     String status = 'sent',
+    bool isDisappearing = false,
+    int disappearingDurationSeconds = 0,
+    String replyToMessageId = '',
+    String replyToSenderName = '',
+    String replyToMediaType = ChatMessageType.text,
+    String replyToText = '',
   }) async {
     final payload = {
       'senderId': senderId,
@@ -80,12 +88,19 @@ class ChatService {
       'fileType': fileType,
       'fileSize': fileSize,
       'status': status,
+      'replyToMessageId': replyToMessageId,
+      'replyToSenderName': replyToSenderName,
+      'replyToMediaType': replyToMediaType,
+      'replyToText': replyToText,
+      'isDisappearing': isDisappearing,
+      'disappearingDurationSeconds': disappearingDurationSeconds,
       'createdAt': FieldValue.serverTimestamp(),
       'timestamp': FieldValue.serverTimestamp(),
     };
 
     final legacyRef = _firestore.collection('chatRooms').doc(roomId);
-    final legacyMessageRef = legacyRef.collection('messages').doc();
+    final resolvedMessageId = messageId.isEmpty ? legacyRef.collection('messages').doc().id : messageId;
+    final legacyMessageRef = legacyRef.collection('messages').doc(resolvedMessageId);
     await legacyMessageRef.set(payload);
     await legacyRef.update({
       'lastMessage': text,
@@ -93,19 +108,50 @@ class ChatService {
     });
 
     final chatRef = _firestore.collection('chats').doc(roomId);
-    final chatMessageRef = chatRef.collection('messages').doc(legacyMessageRef.id);
+    final chatMessageRef = chatRef.collection('messages').doc(resolvedMessageId);
     await chatMessageRef.set(payload);
     await chatRef.update({
       'lastMessage': text,
       'lastTimestamp': FieldValue.serverTimestamp(),
     });
+
+    return resolvedMessageId;
   }
 
-  Future<void> updateMessage({required String roomId, required String messageId, required String newText}) async {
+  Future<void> updateMessage({
+    required String roomId,
+    required String messageId,
+    required String newText,
+    String? status,
+  }) async {
     final payload = {
       'text': newText,
       'isEdited': true,
       'updatedAt': FieldValue.serverTimestamp(),
+    };
+    if (status != null) {
+      payload['status'] = status;
+    }
+
+    final messageRef = _firestore.collection('chatRooms').doc(roomId).collection('messages').doc(messageId);
+    final chatMessageRef = _firestore.collection('chats').doc(roomId).collection('messages').doc(messageId);
+    await messageRef.update(payload);
+    await chatMessageRef.update(payload);
+  }
+
+  Future<void> updateDisappearingState({
+    required String roomId,
+    required String messageId,
+    required bool isDisappearing,
+    required int disappearingDurationSeconds,
+    required DateTime readAt,
+    required DateTime deleteAt,
+  }) async {
+    final payload = {
+      'isDisappearing': isDisappearing,
+      'disappearingDurationSeconds': disappearingDurationSeconds,
+      'readAt': Timestamp.fromDate(readAt),
+      'deleteAt': Timestamp.fromDate(deleteAt),
     };
 
     final messageRef = _firestore.collection('chatRooms').doc(roomId).collection('messages').doc(messageId);

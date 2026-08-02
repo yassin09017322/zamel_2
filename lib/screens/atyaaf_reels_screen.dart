@@ -104,9 +104,10 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     if (_controllers.containsKey(index)) return;
 
     final video = provider.videos[index];
-    final primaryUrl = _service.buildOptimizedVideoUrl(video.videoUrl);
-    final fallbackUrl = _service.buildFallbackVideoUrl(video.videoUrl);
-    final alternativeUrl = _service.buildOptimizedVideoUrl(video.videoUrl, useHls: true);
+    final primaryUrl = _normalizeCloudinaryVideoUrl(video.videoUrl);
+    final fallbackUrl = _service.buildOptimizedVideoUrl(primaryUrl);
+    final alternativeUrl = _service.buildFallbackVideoUrl(primaryUrl);
+    final hlsUrl = _service.buildOptimizedVideoUrl(primaryUrl, useHls: true);
 
     VideoPlayerController controller = _createNetworkController(primaryUrl);
     _controllers[index] = controller;
@@ -120,6 +121,8 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
       debugPrint('Primary reel URL failed: $error');
       _controllerErrors[index] = error.toString();
       if (mounted) setState(() {});
+      await controller.dispose();
+
       try {
         final fallbackController = _createNetworkController(fallbackUrl);
         _controllers[index] = fallbackController;
@@ -132,11 +135,32 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
           debugPrint('Fallback init failed: $fallbackError');
           _controllerErrors[index] = fallbackError.toString();
           if (mounted) setState(() {});
+          await fallbackController.dispose();
+          try {
+            final alternativeController = _createNetworkController(alternativeUrl);
+            _controllers[index] = alternativeController;
+            try {
+              await alternativeController.initialize();
+              await alternativeController.setLooping(true);
+              _controllerErrors.remove(index);
+              if (mounted) setState(() {});
+            } catch (alternativeError) {
+              debugPrint('Alternative init failed: $alternativeError');
+              _controllerErrors[index] = alternativeError.toString();
+              if (mounted) setState(() {});
+              await alternativeController.dispose();
+            }
+          } catch (alternativeError) {
+            debugPrint('Alternative reel URL also failed: $alternativeError');
+            if (mounted) setState(() {});
+          }
         }
       } catch (fallbackError) {
         debugPrint('Fallback reel URL also failed: $fallbackError');
+        if (mounted) setState(() {});
+        await controller.dispose();
         try {
-          final alternativeController = _createNetworkController(alternativeUrl);
+          final alternativeController = _createNetworkController(hlsUrl);
           _controllers[index] = alternativeController;
           try {
             await alternativeController.initialize();
@@ -147,6 +171,7 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
             debugPrint('Alternative init failed: $alternativeError');
             _controllerErrors[index] = alternativeError.toString();
             if (mounted) setState(() {});
+            await alternativeController.dispose();
           }
         } catch (alternativeError) {
           debugPrint('Alternative reel URL also failed: $alternativeError');
@@ -154,6 +179,33 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
         }
       }
     }
+  }
+
+  String _normalizeCloudinaryVideoUrl(String url) {
+    if (url.isEmpty) return url;
+    final uri = Uri.tryParse(url);
+    if (uri == null) return url;
+
+    const uploadPrefix = '/video/upload/';
+    final prefixIndex = uri.path.indexOf(uploadPrefix);
+    if (prefixIndex < 0) return url;
+
+    final afterUpload = uri.path.substring(prefixIndex + uploadPrefix.length);
+    final parts = afterUpload.split('/');
+    if (parts.length < 2) return url;
+
+    final transformationPart = parts.first;
+    final versionPart = parts[1];
+
+    final hasTransformation = RegExp(r'^(q_auto|f_[a-z0-9]+|vc_[a-z0-9]+|ac_[a-z0-9]+|fl_[a-z0-9]+|sp_[a-z0-9]+,?)').hasMatch(transformationPart);
+    final hasVersion = RegExp(r'^v\d+$').hasMatch(versionPart);
+
+    if (hasTransformation && hasVersion) {
+      final normalizedPath = uri.path.substring(0, prefixIndex + uploadPrefix.length) + parts.sublist(1).join('/');
+      return uri.replace(path: normalizedPath).toString();
+    }
+
+    return url;
   }
 
   Future<void> _playCurrentVideo() async {
@@ -262,7 +314,7 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
         );
       }
 
-      final storedVideoUrl = _service.buildOptimizedVideoUrl(uploadedUrl);
+      final storedVideoUrl = uploadedUrl;
 
       await _service.addReel(
         userId: currentUser.id,
@@ -904,6 +956,12 @@ class _AtyaafVideoCardState extends State<_AtyaafVideoCard> {
     }, onError: (_) {});
   }
 
+  @override
+  void dispose() {
+    _viewsSub?.cancel();
+    super.dispose();
+  }
+
   Future<void> _onSharePressed() async {
     widget.onShare();
     await _showShareOptions();
@@ -1007,15 +1065,6 @@ class _AtyaafVideoCardState extends State<_AtyaafVideoCard> {
     );
   }
 
-  // removed url_launcher usage; Share.share is used for cross-platform sharing
-
-  @override
-  void dispose() {
-    _viewsSub?.cancel();
-    super.dispose();
-  }
-
-  
 
 
   Widget _buildInteractionBtn(IconData icon, String label, VoidCallback onTap, {Color iconColor = Colors.white}) {

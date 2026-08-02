@@ -28,9 +28,25 @@ class ChatSyncRepository {
         .snapshots()
         .listen((snapshot) async {
       final messages = snapshot.docs.map((doc) => ChatMessage.fromFirestore(doc, roomId)).toList();
-      
+      final syncedIds = messages.map((message) => message.firestoreId).toSet();
+
       // هنا Isar مضمون إنه موجود لأننا عملنا شرط الحماية فوق
       await isar.writeTxn(() async {
+        final localMessages = await isar.chatMessages
+            .where()
+            .roomIdEqualTo(roomId)
+            .findAll();
+
+        for (final localMessage in localMessages) {
+          final isLocalPending = localMessage.firestoreId.startsWith('local_') || localMessage.status == MessageStatus.pending;
+
+          if (!isLocalPending &&
+              localMessage.firestoreId.isNotEmpty &&
+              !syncedIds.contains(localMessage.firestoreId)) {
+            await isar.chatMessages.delete(localMessage.id);
+          }
+        }
+
         for (final message in messages) {
           final existing = await isar.chatMessages
               .filter()

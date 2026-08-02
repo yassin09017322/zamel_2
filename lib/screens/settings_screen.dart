@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../l10n/app_localizations.dart';
 import '../providers/auth_provider.dart';
 import '../providers/settings_provider.dart';
 
@@ -11,33 +12,42 @@ class SettingsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final settingsProvider = context.watch<SettingsProvider>();
     final authProvider = context.read<AuthProvider>();
+    final l10n = AppLocalizations.of(context);
+
+    if (l10n == null) {
+      return const Scaffold(body: SizedBox.shrink());
+    }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('الإعدادات'),
+        title: Text(l10n.settingsTitle),
         centerTitle: true,
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           _SettingsSection(
-            title: 'الواجهة',
+            title: l10n.settingsInterface,
             children: [
               SwitchListTile(
-                title: const Text('الوضع الداكن'),
-                subtitle: const Text('واجهة مريحة للليل أو النهار'),
+                title: Text(l10n.settingsDarkMode),
+                subtitle: Text(l10n.settingsDarkModeSubtitle),
                 value: settingsProvider.darkMode,
                 onChanged: settingsProvider.toggleDarkMode,
               ),
               ListTile(
                 leading: const Icon(Icons.language),
-                title: const Text('اللغة'),
-                subtitle: Text(settingsProvider.locale.languageCode == 'ar' ? 'العربية' : 'English'),
+                title: Text(l10n.settingsLanguage),
+                subtitle: Text(l10n.settingsLanguageSubtitle),
                 trailing: DropdownButton<String>(
                   value: settingsProvider.locale.languageCode,
                   items: const [
                     DropdownMenuItem(value: 'ar', child: Text('العربية')),
                     DropdownMenuItem(value: 'en', child: Text('English')),
+                    DropdownMenuItem(value: 'fr', child: Text('Français')),
+                    DropdownMenuItem(value: 'de', child: Text('Deutsch')),
+                    DropdownMenuItem(value: 'es', child: Text('Español')),
+                    DropdownMenuItem(value: 'tr', child: Text('Türkçe')),
                   ],
                   onChanged: (value) async {
                     if (value != null) {
@@ -47,8 +57,8 @@ class SettingsScreen extends StatelessWidget {
                 ),
               ),
               SwitchListTile(
-                title: const Text('الوضع المخصص'),
-                subtitle: const Text('إخفاء العناصر غير الضرورية وتبسيط الشاشة'),
+                title: Text(l10n.settingsCustomMode),
+                subtitle: Text(l10n.settingsCustomModeSubtitle),
                 value: settingsProvider.privateMode,
                 onChanged: settingsProvider.togglePrivateMode,
               ),
@@ -56,23 +66,23 @@ class SettingsScreen extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           _SettingsSection(
-            title: 'الإشعارات والتحديث',
+            title: l10n.settingsNotifications,
             children: [
               SwitchListTile(
-                title: const Text('التنبيهات الصوتية'),
-                subtitle: const Text('تنبيهات واضحة عند الرسائل والمكالمات'),
+                title: Text(l10n.settingsSoundNotifications),
+                subtitle: Text(l10n.settingsSoundNotificationsSubtitle),
                 value: settingsProvider.soundNotifications,
                 onChanged: settingsProvider.toggleSoundNotifications,
               ),
               SwitchListTile(
-                title: const Text('التحديث التلقائي للمنشورات'),
-                subtitle: const Text('تحديث مستمر للمنشورات الجديدة'),
+                title: Text(l10n.settingsAutoRefresh),
+                subtitle: Text(l10n.settingsAutoRefreshSubtitle),
                 value: settingsProvider.autoRefresh,
                 onChanged: settingsProvider.toggleAutoRefresh,
               ),
               SwitchListTile(
-                title: const Text('إظهار حالة الاتصال'),
-                subtitle: const Text('عرض متصل الآن وآخر ظهور في الدردشات والمحادثات'),
+                title: Text(l10n.settingsPresence),
+                subtitle: Text(l10n.settingsPresenceSubtitle),
                 value: settingsProvider.sharePresence,
                 onChanged: (value) async {
                   await settingsProvider.toggleSharePresence(value);
@@ -82,8 +92,8 @@ class SettingsScreen extends StatelessWidget {
                 },
               ),
               SwitchListTile(
-                title: const Text('التخطيط المدمج'),
-                subtitle: const Text('تقليل المسافات والعناصر لعرض أكثر سلاسة'),
+                title: Text(l10n.settingsCompactMode),
+                subtitle: Text(l10n.settingsCompactModeSubtitle),
                 value: settingsProvider.compactMode,
                 onChanged: settingsProvider.toggleCompactMode,
               ),
@@ -93,21 +103,21 @@ class SettingsScreen extends StatelessWidget {
           Card(
             child: ListTile(
               leading: const Icon(Icons.public),
-              title: const Text('التطبيق عالمي'),
-              subtitle: const Text('يدعم لغات متعددة ويوفر تجربة مناسبة للمستخدمين حول العالم.'),
+              title: Text(l10n.settingsGlobalTitle),
+              subtitle: Text(l10n.settingsGlobalSubtitle),
             ),
           ),
           const SizedBox(height: 8),
           Card(
             child: ListTile(
               leading: const Icon(Icons.restart_alt),
-              title: const Text('إعادة تعيين الإعدادات'),
-              subtitle: const Text('استعادة القيم الافتراضية لجميع الخيارات.'),
+              title: Text(l10n.settingsResetTitle),
+              subtitle: Text(l10n.settingsResetSubtitle),
               onTap: () async {
                 await settingsProvider.resetSettings();
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('تمت إعادة تعيين الإعدادات بنجاح')),
+                    SnackBar(content: Text(l10n.settingsResetSuccess)),
                   );
                 }
               },
@@ -116,8 +126,8 @@ class SettingsScreen extends StatelessWidget {
           const SizedBox(height: 8),
           ListTile(
             leading: const Icon(Icons.info_outline),
-            title: const Text('عن التطبيق'),
-            subtitle: const Text('ZAMEL نسخة مخصصة من التطبيق السابق مع دعم Firebase وميزات عالمية.'),
+            title: Text(l10n.settingsAboutTitle),
+            subtitle: Text(l10n.settingsAboutSubtitle),
           ),
         ],
       ),

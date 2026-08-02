@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../l10n/app_localizations.dart';
 import '../providers/auth_provider.dart';
 
 class BannedScreen extends StatelessWidget {
@@ -9,10 +10,15 @@ class BannedScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final authProvider = context.read<AuthProvider>();
+    final l10n = AppLocalizations.of(context);
+
+    if (l10n == null) {
+      return const Scaffold(body: SizedBox.shrink());
+    }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('تم حظر الحساب'),
+        title: Text(l10n.bannedTitle),
         centerTitle: true,
       ),
       body: SafeArea(
@@ -24,8 +30,8 @@ class BannedScreen extends StatelessWidget {
             children: [
               const Icon(Icons.block, size: 90, color: Colors.red),
               const SizedBox(height: 20),
-              const Text(
-                'موقوف مؤقتاً أو دائماً، الرجاء التواصل مع الدعم لاعادة تنشيط الحساب',
+              Text(
+                l10n.bannedMessage,
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 18, height: 1.4),
               ),
@@ -34,7 +40,7 @@ class BannedScreen extends StatelessWidget {
                 onPressed: () async {
                   await authProvider.signOut();
                 },
-                child: const Text('تسجيل الخروج'),
+                child: Text(l10n.bannedLogout),
               ),
             ],
           ),
