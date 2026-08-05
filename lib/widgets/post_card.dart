@@ -648,7 +648,6 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                                         username: currentUser.username,
                                         text: '[AUDIO]',
                                         audioUrl: uploadResult['url'],
-                                        publicId: uploadResult['publicId'],
                                         type: 'audio',
                                         duration: audioService.durationSeconds,
                                       );

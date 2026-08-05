@@ -5,7 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
-import '../services/cloudinary_service.dart';
+import '../services/media_service.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -122,8 +122,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     String? photoUrl;
     if (_photoFile != null) {
       try {
-        final cloudinary = Provider.of<CloudinaryService>(context, listen: false);
-        photoUrl = await cloudinary.uploadFile(_photoFile!, isVideo: false);
+        final mediaService = MediaService();
+        photoUrl = await mediaService.uploadFile(_photoFile!, isVideo: false);
       } catch (_) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فشل رفع صورة الملف الشخصي')));

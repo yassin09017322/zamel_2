@@ -1,11 +1,15 @@
+import 'dart:io';
 import 'package:zamel_appp/src/platform_file.dart';
 import 'dart:typed_data';
 import 'dart:ui';
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import '../models/category_model.dart';
 import '../providers/auth_provider.dart';
+import '../services/category_service.dart';
 
 class CreatePostWidget extends StatefulWidget {
   final Future<void> Function(
@@ -18,6 +22,7 @@ class CreatePostWidget extends StatefulWidget {
     Uint8List? webBytes,
     String? mediaFileName,
     String privacy,
+    String? categoryId,
   ) onPublish;
 
   const CreatePostWidget({super.key, required this.onPublish});
@@ -40,18 +45,46 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
   String _selectedPrivacy = 'public';
   String _feeling = '';
   String _location = '';
-  List<String> _taggedPeople = [];
+  String? _selectedCategory;
+  bool _isLoadingCategories = true;
+  bool _categoriesError = false;
+  List<CategoryModel> _categories = [];
+  final List<String> _taggedPeople = [];
 
   final Map<String, Map<String, dynamic>> _privacyOptions = {
-    'public': {'label': 'العامة', 'icon': Icons.public, 'desc': 'أي شخص داخل التطبيق أو خارجه'},
-    'friends': {'label': 'الأصدقاء', 'icon': Icons.group, 'desc': 'أصدقاؤك على زامل فقط'},
-    'private': {'label': 'أنا فقط', 'icon': Icons.lock, 'desc': 'أنت الوحيد الذي يمكنه رؤية هذا'},
+    'public': {'icon': Icons.public},
+    'friends': {'icon': Icons.group},
+    'private': {'icon': Icons.lock},
   };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCategories();
+  }
 
   @override
   void dispose() {
     _textController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadCategories() async {
+    try {
+      final categories = await CategoryService.fetchCategories();
+      if (!mounted) return;
+      setState(() {
+        _categories = categories;
+        _isLoadingCategories = false;
+        _categoriesError = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingCategories = false;
+        _categoriesError = true;
+      });
+    }
   }
 
   // 1. إغلاق الكيبورد (تحسين UX احترافي)
@@ -109,20 +142,20 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
               children: [
                 Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)))),
                 const SizedBox(height: 16),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 20),
-                  child: Text('من يمكنه رؤية منشورك؟', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Text('who_can_see'.tr(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 ),
                 const SizedBox(height: 12),
                 ..._privacyOptions.entries.map((entry) {
                   final isSelected = _selectedPrivacy == entry.key;
                   return ListTile(
                     leading: CircleAvatar(
-                      backgroundColor: isSelected ? const Color(0xFF5B6CFF).withOpacity(0.1) : Colors.grey[200],
+                      backgroundColor: isSelected ? const Color(0xFF5B6CFF).withValues(alpha: 0.1) : Colors.grey[200],
                       child: Icon(entry.value['icon'], color: isSelected ? const Color(0xFF5B6CFF) : Colors.black87),
                     ),
-                    title: Text(entry.value['label'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text(entry.value['desc'], style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                    title: Text(entry.key.tr(), style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text('${entry.key}_desc'.tr(), style: TextStyle(fontSize: 12, color: Colors.grey[600])),
                     trailing: isSelected ? const Icon(Icons.check_circle, color: Color(0xFF5B6CFF)) : null,
                     onTap: () {
                       setState(() => _selectedPrivacy = entry.key);
@@ -165,7 +198,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
               children: [
                 Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)))),
                 const SizedBox(height: 16),
-                const Text('بم تشعر الآن؟', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Text('how_are_you_feeling'.tr(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 16),
                 Wrap(
                   spacing: 10,
@@ -182,8 +215,8 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: const Color(0xFF5B6CFF).withOpacity(0.3)),
-                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 4, offset: const Offset(0, 2))],
+                        border: Border.all(color: const Color(0xFF5B6CFF).withValues(alpha: 0.3)),
+                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 4, offset: const Offset(0, 2))],
                       ),
                       child: Text('${f['emoji']} يشعر بـ ${f['text']}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF5B6CFF))),
                     ),
@@ -197,7 +230,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                       Navigator.pop(context);
                     },
                     icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                    label: const Text('إزالة الشعور الحالي', style: TextStyle(color: Colors.redAccent)),
+                    label: Text('remove_current_feeling'.tr(), style: const TextStyle(color: Colors.redAccent)),
                   )
                 ]
               ],
@@ -226,12 +259,12 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
               children: [
                 Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)))),
                 const SizedBox(height: 16),
-                const Text('أين أنت؟', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Text('where_are_you'.tr(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 16),
                 TextField(
                   autofocus: true,
                   decoration: InputDecoration(
-                    hintText: 'ابحث عن موقع (مثال: الخرطوم)',
+                    hintText: 'search_location_hint'.tr(),
                     prefixIcon: const Icon(Icons.location_on, color: Color(0xFF2EC7A5)),
                     filled: true,
                     fillColor: Colors.grey[100],
@@ -250,7 +283,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                     setState(() => _location = inputLocation.trim());
                     Navigator.pop(context);
                   },
-                  child: const Text('تحديد الموقع', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                  child: Text('set_location'.tr(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                 ),
                 const SizedBox(height: 16),
               ],
@@ -279,12 +312,12 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
               children: [
                 Center(child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)))),
                 const SizedBox(height: 16),
-                const Text('مع من أنت؟', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                Text('with_who'.tr(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 16),
                 TextField(
                   autofocus: true,
                   decoration: InputDecoration(
-                    hintText: 'اكتب اسم الشخص للإشارة إليه...',
+                    hintText: 'tag_person_hint'.tr(),
                     prefixIcon: const Icon(Icons.person_add, color: Color(0xFFE94057)),
                     filled: true,
                     fillColor: Colors.grey[100],
@@ -305,7 +338,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                     }
                     Navigator.pop(context);
                   },
-                  child: const Text('إضافة إشارة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                  child: Text('add_tag'.tr(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                 ),
                 const SizedBox(height: 16),
               ],
@@ -338,7 +371,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                   children: [
                     Text(prefixIcon, style: const TextStyle(fontSize: 24)),
                     const SizedBox(width: 8),
-                    Text('إضافة $title', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    Text('${'add'.tr()} $title', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -346,7 +379,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                   autofocus: true,
                   maxLines: 3,
                   decoration: InputDecoration(
-                    hintText: 'تفاصيل الـ $title...',
+                    hintText: '${'details'.tr()} $title...',
                     filled: true,
                     fillColor: Colors.grey[100],
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
@@ -369,7 +402,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                     }
                     Navigator.pop(ctx);
                   },
-                  child: const Text('إدراج في المنشور', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                  child: Text('insert_into_post'.tr(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                 ),
                 const SizedBox(height: 16),
               ],
@@ -384,8 +417,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
   Future<void> _handlePublish() async {
     _dismissKeyboard();
     String finalText = _textController.text.trim();
-    
-    // دمج الإشارات والشعور بذكاء لضمان الحفظ
+
     if (_feeling.isNotEmpty) {
       finalText = '🌟 أشعر بـ $_feeling\n\n$finalText';
     }
@@ -394,7 +426,12 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     }
 
     if (finalText.isEmpty && _selectedMediaFile == null && _selectedMediaBytes == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الرجاء كتابة شيء أو إرفاق وسائط')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('post_required'.tr())));
+      return;
+    }
+
+    if (_selectedCategory == null || _selectedCategory!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('category_required'.tr())));
       return;
     }
 
@@ -410,9 +447,10 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
         _selectedMediaBytes,
         _selectedMediaName.isNotEmpty ? _selectedMediaName : null,
         _selectedPrivacy,
+        _selectedCategory,
       );
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('حدث خطأ أثناء النشر: $e')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('publish_failed'.tr(args: [e.toString()]))));
     } finally {
       if (mounted) setState(() => _isPublishing = false);
     }
@@ -423,10 +461,12 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     final user = context.watch<AuthProvider>().currentUser;
     final username = user?.username ?? 'مستخدم';
     final initial = username.isNotEmpty ? username[0].toUpperCase() : 'م';
-    final bool canPublish = _textController.text.trim().isNotEmpty || _selectedMediaFile != null || _selectedMediaBytes != null || _feeling.isNotEmpty || _location.isNotEmpty || _taggedPeople.isNotEmpty;
+    final bool canPublish = (_textController.text.trim().isNotEmpty || _selectedMediaFile != null || _selectedMediaBytes != null || _feeling.isNotEmpty || _location.isNotEmpty || _taggedPeople.isNotEmpty) && _selectedCategory != null && _selectedCategory!.isNotEmpty;
+
+    final isArabic = context.locale.languageCode == 'ar';
 
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
       child: Scaffold(
         backgroundColor: Colors.white,
         appBar: AppBar(
@@ -439,7 +479,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
               Navigator.of(context).pop();
             },
           ),
-          title: const Text('منشور جديد', style: TextStyle(color: Colors.black, fontSize: 18, fontWeight: FontWeight.bold)),
+          title: Text('post_new'.tr(), style: const TextStyle(color: Colors.black, fontSize: 18, fontWeight: FontWeight.bold)),
           centerTitle: true,
           actions: [
             IconButton(
@@ -495,11 +535,11 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                       physics: const BouncingScrollPhysics(),
                       child: Row(
                         children: [
-                          _buildInteractiveChip(Icons.person_add_alt_1, 'الأشخاص', _taggedPeople.isNotEmpty ? const Color(0xFFE94057) : Colors.black87, _showTagPicker),
+                          _buildInteractiveChip(Icons.person_add_alt_1, 'people'.tr(), _taggedPeople.isNotEmpty ? const Color(0xFFE94057) : Colors.black87, _showTagPicker),
                           const SizedBox(width: 8),
-                          _buildInteractiveChip(Icons.location_on, 'الموقع', _location.isNotEmpty ? const Color(0xFF2EC7A5) : Colors.black87, _showLocationPicker),
+                          _buildInteractiveChip(Icons.location_on, 'location'.tr(), _location.isNotEmpty ? const Color(0xFF2EC7A5) : Colors.black87, _showLocationPicker),
                           const SizedBox(width: 8),
-                          _buildInteractiveChip(Icons.emoji_emotions, 'شعور/نشاط', _feeling.isNotEmpty ? const Color(0xFFF27121) : Colors.black87, _showFeelingPicker),
+                          _buildInteractiveChip(Icons.emoji_emotions, 'mood_activity'.tr(), _feeling.isNotEmpty ? const Color(0xFFF27121) : Colors.black87, _showFeelingPicker),
                         ],
                       ),
                     ),
@@ -514,7 +554,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                           label: Text(person, style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.bold)),
                           backgroundColor: const Color(0xFFE94057),
                           elevation: 2,
-                          shadowColor: const Color(0xFFE94057).withOpacity(0.4),
+                          shadowColor: const Color(0xFFE94057).withValues(alpha: 0.4),
                           deleteIcon: const Icon(Icons.cancel, size: 18, color: Colors.white),
                           onDeleted: () => setState(() => _taggedPeople.remove(person)),
                         )).toList(),
@@ -522,14 +562,62 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                     ],
                     const SizedBox(height: 16),
 
+                    if (_isLoadingCategories)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text('loading_categories'.tr()),
+                      )
+                    else if (_categoriesError)
+                      Row(
+                        children: [
+                          Expanded(child: Text('categories_unavailable'.tr())),
+                          TextButton(
+                            onPressed: _loadCategories,
+                            child: Text('retry_action'.tr()),
+                          ),
+                        ],
+                      )
+                    else if (_categories.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        child: Text('categories_empty'.tr()),
+                      )
+                    else
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('select_category'.tr(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: _categories.map((category) {
+                              final label = category.id.tr();
+                              final selected = _selectedCategory == category.id;
+                              return ChoiceChip(
+                                label: Text(label),
+                                selected: selected,
+                                selectedColor: const Color(0xFF5B6CFF),
+                                labelStyle: TextStyle(
+                                  color: selected ? Colors.white : Colors.black87,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                onSelected: (_) => setState(() => _selectedCategory = category.id),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    const SizedBox(height: 16),
+
                     // --- مساحة الكتابة ---
                     TextField(
                       controller: _textController,
                       maxLines: null,
                       keyboardType: TextInputType.multiline,
-                      decoration: const InputDecoration(
-                        hintText: 'اكتب شيئاً مفيداً...',
-                        hintStyle: TextStyle(fontSize: 22, color: Colors.black38),
+                      decoration: InputDecoration(
+                        hintText: 'write_prompt'.tr(),
+                        hintStyle: const TextStyle(fontSize: 22, color: Colors.black38),
                         border: InputBorder.none,
                       ),
                       style: const TextStyle(fontSize: 18, height: 1.5),
@@ -546,7 +634,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                             constraints: const BoxConstraints(maxHeight: 400),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(20),
-                              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 10, offset: const Offset(0, 5))],
+                              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 10, offset: const Offset(0, 5))],
                             ),
                             child: ClipRRect(
                               borderRadius: BorderRadius.circular(20),
@@ -592,7 +680,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                                   filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
                                   child: Container(
                                     padding: const EdgeInsets.all(8),
-                                    decoration: BoxDecoration(color: Colors.black.withOpacity(0.5), shape: BoxShape.circle),
+                                    decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.5), shape: BoxShape.circle),
                                     child: const Icon(Icons.close, color: Colors.white, size: 20),
                                   ),
                                 ),
@@ -611,7 +699,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
               padding: const EdgeInsets.symmetric(vertical: 12),
               decoration: BoxDecoration(
                 color: Colors.white,
-                boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, -5))],
+                boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 10, offset: const Offset(0, -5))],
               ),
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -619,15 +707,15 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Row(
                   children: [
-                    _buildSquareButton(Icons.image_outlined, 'المعرض', _pickMedia),
+                    _buildSquareButton(Icons.image_outlined, 'gallery'.tr(), _pickMedia),
                     const SizedBox(width: 10),
-                    _buildSquareButton(Icons.track_changes, 'هدف', () => _addSpecialBlock('هدف', '🎯')),
+                    _buildSquareButton(Icons.track_changes, 'goal'.tr(), () => _addSpecialBlock('goal'.tr(), '🎯')),
                     const SizedBox(width: 10),
-                    _buildSquareButton(Icons.notifications_none, 'تذكير', () => _addSpecialBlock('تذكير', '🔔')),
+                    _buildSquareButton(Icons.notifications_none, 'reminder'.tr(), () => _addSpecialBlock('reminder'.tr(), '🔔')),
                     const SizedBox(width: 10),
-                    _buildSquareButton(Icons.description_outlined, 'ملاحظة', () => _addSpecialBlock('ملاحظة', '📝')),
+                    _buildSquareButton(Icons.description_outlined, 'note'.tr(), () => _addSpecialBlock('note'.tr(), '📝')),
                     const SizedBox(width: 10),
-                    _buildSquareButton(Icons.event_note_outlined, 'المخطط اليومي', () => _addSpecialBlock('مخطط اليوم', '📅')),
+                    _buildSquareButton(Icons.event_note_outlined, 'daily_plan'.tr(), () => _addSpecialBlock('daily_plan'.tr(), '📅')),
                   ],
                 ),
               ),
@@ -657,7 +745,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                           Icon(_privacyOptions[_selectedPrivacy]!['icon'], size: 18, color: Colors.black87),
                           const SizedBox(width: 6),
                           Text(
-                            _privacyOptions[_selectedPrivacy]!['label'], 
+                            _selectedPrivacy.tr(), 
                             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87)
                           ),
                           const SizedBox(width: 4),
@@ -677,7 +765,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                     onPressed: canPublish && !_isPublishing ? _handlePublish : null,
                     child: _isPublishing
                         ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('نشر', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                        : Text('publish'.tr(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                   ),
                 ],
               ),
@@ -696,8 +784,8 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
         duration: const Duration(milliseconds: 300),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
-          color: color != Colors.black87 ? color.withOpacity(0.1) : Colors.transparent,
-          border: Border.all(color: color != Colors.black87 ? color.withOpacity(0.5) : Colors.grey.shade300),
+          color: color != Colors.black87 ? color.withValues(alpha: 0.1) : Colors.transparent,
+          border: Border.all(color: color != Colors.black87 ? color.withValues(alpha: 0.5) : Colors.grey.shade300),
           borderRadius: BorderRadius.circular(24),
         ),
         child: Row(
@@ -722,7 +810,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
           color: Colors.white,
           border: Border.all(color: Colors.grey.shade200),
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 4, offset: const Offset(0, 2))],
+          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.02), blurRadius: 4, offset: const Offset(0, 2))],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,

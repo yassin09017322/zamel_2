@@ -1,8 +1,4 @@
-import 'dart:convert';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:http/http.dart' as http;
 
 import '../models/chat_room.dart';
 import '../models/chat_message.dart';
@@ -64,7 +60,6 @@ class ChatService {
     String messageId = '',
     String mediaType = 'text',
     String mediaUrl = '',
-    String publicId = '',
     String fileName = '',
     String fileType = '',
     int fileSize = 0,
@@ -83,7 +78,6 @@ class ChatService {
       'text': text,
       'mediaType': mediaType,
       'mediaUrl': mediaUrl,
-      'publicId': publicId,
       'fileName': fileName,
       'fileType': fileType,
       'fileSize': fileSize,
@@ -102,18 +96,18 @@ class ChatService {
     final resolvedMessageId = messageId.isEmpty ? legacyRef.collection('messages').doc().id : messageId;
     final legacyMessageRef = legacyRef.collection('messages').doc(resolvedMessageId);
     await legacyMessageRef.set(payload);
-    await legacyRef.update({
+    await legacyRef.set({
       'lastMessage': text,
       'lastTimestamp': FieldValue.serverTimestamp(),
-    });
+    }, SetOptions(merge: true));
 
     final chatRef = _firestore.collection('chats').doc(roomId);
     final chatMessageRef = chatRef.collection('messages').doc(resolvedMessageId);
     await chatMessageRef.set(payload);
-    await chatRef.update({
+    await chatRef.set({
       'lastMessage': text,
       'lastTimestamp': FieldValue.serverTimestamp(),
-    });
+    }, SetOptions(merge: true));
 
     return resolvedMessageId;
   }
@@ -172,23 +166,11 @@ class ChatService {
     await chatMessageRef.update(payload);
   }
 
-  Future<void> deleteMessage({required String roomId, required String messageId, String? publicId}) async {
+  Future<void> deleteMessage({required String roomId, required String messageId}) async {
     final messageRef = _firestore.collection('chatRooms').doc(roomId).collection('messages').doc(messageId);
     final chatMessageRef = _firestore.collection('chats').doc(roomId).collection('messages').doc(messageId);
     await messageRef.delete();
     await chatMessageRef.delete();
-
-    if (publicId != null && publicId.isNotEmpty) {
-      try {
-        final projectId = Firebase.app().options.projectId;
-        final functionUrl = 'https://us-central1-$projectId.cloudfunctions.net/deleteCloudinaryAsset';
-        await http.post(
-          Uri.parse(functionUrl),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'publicId': publicId, 'resourceType': 'auto'}),
-        );
-      } catch (_) {}
-    }
   }
 
   Stream<List<Message>> messagesStream(String roomId) {

@@ -8,8 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 
-import '../config.dart';
-import 'cloudinary_service.dart';
+import 'media_service.dart';
 import 'package:zamel_appp/src/platform_file.dart' as io;
 import 'web_audio_stub.dart' if (dart.library.html) 'web_audio.dart';
 
@@ -18,10 +17,7 @@ class AudioCommentService {
   final audioplayers.AudioPlayer _player = audioplayers.AudioPlayer();
   final FlutterSoundRecorder _desktopRecorder = FlutterSoundRecorder();
   final FlutterSoundPlayer _desktopPlayer = FlutterSoundPlayer();
-  final CloudinaryService _cloudinaryService = CloudinaryService(
-    cloudName: AppConfig.cloudinaryCloudName,
-    uploadPreset: AppConfig.cloudinaryUploadPreset,
-  );
+  final MediaService _mediaService = MediaService();
 
   bool _isRecording = false;
   String? _recordingPath;
@@ -115,31 +111,23 @@ class AudioCommentService {
       final bytes = _webRecordedBytes;
       if (bytes == null || bytes.isEmpty) return null;
 
-      final publicId = 'kolo_app/comments_audio/${DateTime.now().millisecondsSinceEpoch}';
-      final uploadedUrl = await _cloudinaryService.uploadBytes(
+      final uploadedUrl = await _mediaService.uploadBytes(
         bytes,
         filePath.endsWith('.webm') ? 'comment.webm' : 'comment.wav',
         isVideo: false,
-        folder: 'kolo_app/comments_audio',
-        publicId: publicId,
-        resourceType: 'video',
       );
-      return {'url': uploadedUrl, 'publicId': publicId};
+      return {'url': uploadedUrl};
     }
 
     final dynamic file = io.File(filePath);
     if (!await (file as dynamic).exists()) return null;
 
-    final publicId = 'kolo_app/comments_audio/${DateTime.now().millisecondsSinceEpoch}';
-    final uploadedUrl = await _cloudinaryService.uploadFile(
+    final uploadedUrl = await _mediaService.uploadFile(
       file,
       isVideo: false,
-      folder: 'kolo_app/comments_audio',
-      publicId: publicId,
-      resourceType: 'video',
     );
 
-    return {'url': uploadedUrl, 'publicId': publicId};
+    return {'url': uploadedUrl};
   }
 
   Future<void> play(String url) async {

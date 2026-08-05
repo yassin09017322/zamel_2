@@ -10,6 +10,7 @@ class SettingsProvider extends ChangeNotifier {
   bool _privateMode = false;
   bool _compactMode = false;
   bool _sharePresence = true;
+  String _feedMode = 'all';
 
   bool get darkMode => _darkMode;
   Locale get locale => Locale(_languageCode);
@@ -19,6 +20,7 @@ class SettingsProvider extends ChangeNotifier {
   bool get privateMode => _privateMode;
   bool get compactMode => _compactMode;
   bool get sharePresence => _sharePresence;
+  String get feedMode => _feedMode;
 
   SettingsProvider() {
     _loadPreferences();
@@ -29,16 +31,14 @@ class SettingsProvider extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       _darkMode = prefs.getBool('darkMode') ?? false;
       final storedLanguageCode = prefs.getString('languageCode');
-      if (storedLanguageCode != null && (storedLanguageCode == 'ar' || storedLanguageCode == 'en' || storedLanguageCode == 'fr' || storedLanguageCode == 'de' || storedLanguageCode == 'es' || storedLanguageCode == 'tr')) {
+      if (storedLanguageCode != null && (storedLanguageCode == 'ar' || storedLanguageCode == 'en' || storedLanguageCode == 'fr' || storedLanguageCode == 'es')) {
         _languageCode = storedLanguageCode;
       } else {
         final deviceLocale = WidgetsBinding.instance.platformDispatcher.locale.languageCode;
         _languageCode = switch (deviceLocale) {
           'en' => 'en',
           'fr' => 'fr',
-          'de' => 'de',
           'es' => 'es',
-          'tr' => 'tr',
           _ => 'ar',
         };
       }
@@ -47,6 +47,7 @@ class SettingsProvider extends ChangeNotifier {
       _privateMode = prefs.getBool('privateMode') ?? false;
       _compactMode = prefs.getBool('compactMode') ?? false;
       _sharePresence = prefs.getBool('sharePresence') ?? true;
+      _feedMode = prefs.getString('user_mode') ?? 'all';
     } catch (_) {
       _darkMode = false;
       _languageCode = 'ar';
@@ -55,6 +56,7 @@ class SettingsProvider extends ChangeNotifier {
       _privateMode = false;
       _compactMode = false;
       _sharePresence = true;
+      _feedMode = 'all';
     }
     _isInitialized = true;
     notifyListeners();
@@ -70,7 +72,7 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> setLanguage(String languageCode) async {
-    if (languageCode != 'ar' && languageCode != 'en' && languageCode != 'fr' && languageCode != 'de' && languageCode != 'es' && languageCode != 'tr') {
+    if (languageCode != 'ar' && languageCode != 'en' && languageCode != 'fr' && languageCode != 'es') {
       return;
     }
     _languageCode = languageCode;
@@ -123,6 +125,15 @@ class SettingsProvider extends ChangeNotifier {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('compactMode', value);
+    } catch (_) {}
+  }
+
+  Future<void> setFeedMode(String value) async {
+    _feedMode = value;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('user_mode', value);
     } catch (_) {}
   }
 

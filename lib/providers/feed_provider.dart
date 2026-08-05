@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/post.dart';
 import '../models/app_user.dart'; // تم إضافة استدعاء موديل المستخدم
@@ -32,11 +33,21 @@ class FeedProvider extends ChangeNotifier {
   }
 
   // 2. الدالة القديمة (خليناها كاحتياط)
-  Stream<List<Post>> postsStream() {
-    final query = firestore.collection('posts').orderBy('timestamp', descending: true);
+  Stream<List<Post>> postsStream({String? categoryId}) {
+    Query<Map<String, dynamic>> query = firestore.collection('posts').orderBy('createdAt', descending: true);
+
+    if (categoryId != null && categoryId.isNotEmpty && categoryId != 'all') {
+      query = query.where('categoryId', isEqualTo: categoryId).orderBy('createdAt', descending: true);
+    }
+
     return query.snapshots().map((snapshot) {
       return snapshot.docs.map((doc) => Post.fromFirestore(doc)).toList();
     });
+  }
+
+  Future<String> getSavedFeedMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('user_mode') ?? 'all';
   }
 
   // 3. دالة حساب النقاط (الذكاء الاصطناعي للخوارزمية)

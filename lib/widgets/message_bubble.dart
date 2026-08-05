@@ -107,7 +107,7 @@ class MessageBubble extends StatelessWidget {
           );
 
           if (confirm == true) {
-            await ChatService().deleteMessage(roomId: message.roomId, messageId: message.firestoreId, publicId: message.publicId);
+            await ChatService().deleteMessage(roomId: message.roomId, messageId: message.firestoreId);
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف الرسالة')));
             }
@@ -137,7 +137,7 @@ class MessageBubble extends StatelessWidget {
           );
 
           if (confirm == true) {
-            await ChatService().deleteMessage(roomId: message.roomId, messageId: message.firestoreId, publicId: message.publicId);
+            await ChatService().deleteMessage(roomId: message.roomId, messageId: message.firestoreId);
             if (context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف الرسالة')));
             }
@@ -458,7 +458,6 @@ class _FullScreenMediaScreenState extends State<_FullScreenMediaScreen> {
           await ChatService().deleteMessage(
             roomId: widget.message.roomId,
             messageId: widget.message.firestoreId,
-            publicId: widget.message.publicId,
           );
               
           if (context.mounted) Navigator.pop(context);

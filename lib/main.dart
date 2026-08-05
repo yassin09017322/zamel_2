@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart' as firestore;
+import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:firebase_core/firebase_core.dart' as firebase_core;
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -18,15 +19,16 @@ import 'providers/settings_provider.dart';
 import 'screens/admin_screen.dart';
 import 'screens/atyaaf_reels_screen.dart';
 import 'screens/banned_screen.dart';
+import 'screens/channels_screen.dart';
 import 'screens/feature_ideas_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
-import 'services/cloudinary_service.dart';
 import 'services/local_storage_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await EasyLocalization.ensureInitialized();
   timeago.setLocaleMessages('ar', timeago.ArMessages());
 
   try {
@@ -53,7 +55,19 @@ Future<void> main() async {
     }
   } catch (_) {}
 
-  runApp(const ZamelApp());
+  runApp(
+    EasyLocalization(
+      supportedLocales: const [
+        Locale('ar'),
+        Locale('en'),
+        Locale('fr'),
+        Locale('es'),
+      ],
+      fallbackLocale: const Locale('en'),
+      path: 'assets/translations',
+      child: const ZamelApp(),
+    ),
+  );
 }
 
 class ZamelApp extends StatelessWidget {
@@ -68,12 +82,6 @@ class ZamelApp extends StatelessWidget {
         ChangeNotifierProvider<AtyaafProvider>(create: (_) => AtyaafProvider()),
         ChangeNotifierProvider<EngagementProvider>(create: (_) => EngagementProvider()),
         ChangeNotifierProvider<FeedProvider>(create: (_) => FeedProvider()), 
-        Provider<CloudinaryService>(
-          create: (_) => CloudinaryService(
-            cloudName: AppConfig.cloudinaryCloudName,
-            uploadPreset: AppConfig.cloudinaryUploadPreset,
-          ),
-        ),
         Provider<LocalStorageService>(create: (_) => LocalStorageService()),
       ],
       child: PresenceTracker(
@@ -143,18 +151,20 @@ class ZamelApp extends StatelessWidget {
               ),
             ),
             themeMode: settingsProvider.darkMode ? ThemeMode.dark : ThemeMode.light,
-            localizationsDelegates: const [
+            localizationsDelegates: [
+              ...context.localizationDelegates,
               AppLocalizations.delegate,
               GlobalMaterialLocalizations.delegate,
               GlobalWidgetsLocalizations.delegate,
               GlobalCupertinoLocalizations.delegate,
             ],
-            supportedLocales: AppLocalizations.supportedLocales,
-            locale: settingsProvider.locale,
+            supportedLocales: context.supportedLocales,
+            locale: context.locale,
             routes: {
               '/admin': (_) => const AdminScreen(),
               '/banned': (_) => const BannedScreen(),
               '/atyaaf': (_) => const AtyaafReelsScreen(),
+              '/channels': (_) => const ChannelsScreen(),
               '/ideas': (_) => const FeatureIdeasScreen(),
               '/registration': (_) => const RegisterScreen(),
               '/home': (_) => const HomeScreen(),

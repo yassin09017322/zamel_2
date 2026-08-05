@@ -42,6 +42,7 @@ class Post {
   final String legacyPublicId;
   final String location;         // تم إضافة الموقع ليتوافق مع شاشة الإنشاء
   final bool isTemporary;        // تم إضافة حالة المنشور المؤقت (قصة/24 ساعة)
+  final String? categoryId;
   final DateTime timestamp;
   final int commentsCount;
   final List<String> likes;
@@ -60,6 +61,7 @@ class Post {
     this.legacyPublicId = '',
     this.location = '',
     this.isTemporary = false,
+    this.categoryId,
     required this.timestamp,
     required this.commentsCount,
     required this.likes,
@@ -148,6 +150,7 @@ class Post {
       legacyPublicId: data['publicId'] as String? ?? '',
       location: data['location'] as String? ?? '',
       isTemporary: data['isTemporary'] as bool? ?? false,
+      categoryId: data['categoryId'] as String?,
       timestamp: date,
       commentsCount: parsedCommentsCount,
       likes: parsedLikes,
@@ -175,6 +178,7 @@ class Post {
       'publicId': publicId,
       'location': location,
       'isTemporary': isTemporary,
+      'categoryId': categoryId,
       'timestamp': FieldValue.serverTimestamp(),
       'commentsCount': commentsCount,
       'likes': likes,
@@ -196,6 +200,7 @@ class Post {
     String? legacyPublicId,
     String? location,
     bool? isTemporary,
+    String? categoryId,
     DateTime? timestamp,
     int? commentsCount,
     List<String>? likes,
@@ -214,6 +219,7 @@ class Post {
       legacyPublicId: legacyPublicId ?? this.legacyPublicId,
       location: location ?? this.location,
       isTemporary: isTemporary ?? this.isTemporary,
+      categoryId: categoryId ?? this.categoryId,
       timestamp: timestamp ?? this.timestamp,
       commentsCount: commentsCount ?? this.commentsCount,
       likes: likes ?? this.likes,

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -11,6 +12,7 @@ import 'admin_screen.dart';
 import 'call_screen.dart';
 import 'chat_screen.dart';
 import 'atyaaf_reels_screen.dart';
+import 'channels_screen.dart';
 import 'feature_ideas_screen.dart';
 import 'feed_screen.dart';
 import 'notifications_screen.dart';
@@ -122,8 +124,10 @@ class _HomeScreenState extends State<HomeScreen> {
     final authProvider = context.watch<AuthProvider>();
     final engagementProvider = context.watch<EngagementProvider>();
 
+    final isArabic = context.locale.languageCode == 'ar';
+
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
       child: Scaffold(
         appBar: PreferredSize(
           preferredSize: const Size.fromHeight(kToolbarHeight),
@@ -156,6 +160,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   },
                 ),
                 IconButton(
+                  icon: const Icon(Icons.group_work_outlined),
+                  tooltip: 'القنوات',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ChannelsScreen()));
+                  },
+                ),
+                IconButton(
                   icon: const Icon(Icons.public),
                   tooltip: 'ميزات عالمية',
                   onPressed: () {
@@ -181,7 +192,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       borderRadius: BorderRadius.circular(10),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFFE94057).withOpacity(0.4),
+                          color: const Color(0xFFE94057).withValues(alpha: 0.4),
                           blurRadius: 6,
                           offset: const Offset(0, 2),
                         )

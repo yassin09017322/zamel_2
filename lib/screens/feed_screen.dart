@@ -1,6 +1,7 @@
 import 'dart:async';
-import '../src/file_io_stub.dart' if (dart.library.io) 'dart:io';
+import 'dart:io';
 
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -10,7 +11,8 @@ import '../models/post.dart';
 import '../models/story.dart';
 import '../providers/auth_provider.dart';
 import '../providers/feed_provider.dart';
-import '../services/cloudinary_service.dart';
+import '../providers/settings_provider.dart';
+import '../services/media_service.dart';
 import '../services/post_service.dart';
 import '../services/story_service.dart';
 import '../widgets/create_post_widget.dart';
@@ -53,7 +55,7 @@ class _FeedScreenState extends State<FeedScreen> {
       final String mediaType = isVideo ? 'video' : 'image';
 
       if (!mounted) return;
-      
+
       final bool? confirm = await showDialog<bool>(
         context: context,
         builder: (ctx) => Directionality(
@@ -136,22 +138,23 @@ class _FeedScreenState extends State<FeedScreen> {
 
       if (durationSelected == null) return;
       selectedDuration = durationSelected;
+
       if (!mounted) return;
-      
+
       showDialog(
         context: context,
         barrierDismissible: false,
         builder: (_) => const Center(child: CircularProgressIndicator(color: Color(0xFFE94057))),
       );
 
-      final cloudinary = Provider.of<CloudinaryService>(context, listen: false);
+      final mediaService = MediaService();
       final String imageUrl = kIsWeb || media.path.isEmpty
-          ? await cloudinary.uploadBytes(
+          ? await mediaService.uploadBytes(
               await media.readAsBytes(),
               media.name,
               isVideo: isVideo,
             )
-          : await cloudinary.uploadFile(
+          : await mediaService.uploadFile(
               File(media.path),
               isVideo: isVideo,
             );
@@ -195,15 +198,24 @@ class _FeedScreenState extends State<FeedScreen> {
         return ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           child: CreatePostWidget(
-            onPublish: (text, isTemp, loc, mediaType, mediaData, localFile, webBytes, mediaFileName, privacy) async { 
+            onPublish: (text, isTemp, loc, mediaType, mediaData, localFile, webBytes, mediaFileName, privacy, categoryId) async {
+              if (categoryId == null || categoryId.trim().isEmpty) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('category_required'.tr())),
+                  );
+                }
+                return;
+              }
+
               String finalMedia = mediaData;
               
               if (localFile != null && !kIsWeb) {
-                final cloudinary = Provider.of<CloudinaryService>(context, listen: false);
-                finalMedia = await cloudinary.uploadFile(localFile, isVideo: mediaType == 'video');
+                final mediaService = MediaService();
+                finalMedia = await mediaService.uploadFile(localFile, isVideo: mediaType == 'video');
               } else if (webBytes != null && mediaFileName != null && mediaFileName.isNotEmpty) {
-                final cloudinary = Provider.of<CloudinaryService>(context, listen: false);
-                finalMedia = await cloudinary.uploadBytes(
+                final mediaService = MediaService();
+                finalMedia = await mediaService.uploadBytes(
                   webBytes,
                   mediaFileName,
                   isVideo: mediaType == 'video',
@@ -217,7 +229,8 @@ class _FeedScreenState extends State<FeedScreen> {
                 isTemporary: isTemp,
                 location: loc, 
                 mediaType: mediaType, 
-                mediaData: finalMedia, 
+                mediaData: finalMedia,
+                categoryId: categoryId,
                 privacy: privacy, 
               );
               
@@ -225,7 +238,7 @@ class _FeedScreenState extends State<FeedScreen> {
               
               if (context.mounted) {
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نشر المنشور بنجاح!')));
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('publish_success'.tr())));
               }
             },
           ),
@@ -247,14 +260,14 @@ class _FeedScreenState extends State<FeedScreen> {
             end: Alignment.bottomRight
           ),
           borderRadius: BorderRadius.circular(22),
-          boxShadow: [BoxShadow(color: const Color(0xFFE94057).withOpacity(0.3), blurRadius: 8, offset: const Offset(0, 4))],
+          boxShadow: [BoxShadow(color: const Color(0xFFE94057).withValues(alpha: 0.3), blurRadius: 8, offset: const Offset(0, 4))],
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white.withOpacity(0.6), width: 1.5)),
+              decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: Colors.white.withValues(alpha: 0.6), width: 1.5)),
               child: const Icon(Icons.add, color: Colors.white, size: 28),
             ),
             const SizedBox(height: 12),
@@ -264,8 +277,6 @@ class _FeedScreenState extends State<FeedScreen> {
       ),
     );
   }
-
-  // Removed unused helper that opened the story owner's profile.
 
   Widget _buildUserStoryCard(BuildContext context, Story story, List<Story> storiesGroup) {
     return GestureDetector(
@@ -323,12 +334,14 @@ class _FeedScreenState extends State<FeedScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // جلب المستخدم الحالي والخوارزمية بشكل مباشر ونظيف
-    final currentUser = Provider.of<AuthProvider>(context).currentUser;
     final feedProvider = Provider.of<FeedProvider>(context);
+    final settingsProvider = context.watch<SettingsProvider>();
+    final selectedMode = settingsProvider.feedMode;
+
+    final isArabic = context.locale.languageCode == 'ar';
 
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: isArabic ? TextDirection.rtl : TextDirection.ltr,
       child: RefreshIndicator(
         onRefresh: _handleRefresh,
         color: const Color(0xFFE94057),
@@ -384,8 +397,7 @@ class _FeedScreenState extends State<FeedScreen> {
               
               // --- قائمة المنشورات (بإستخدام خوارزمية زامل الذكية) ---
               StreamBuilder<List<Post>>(
-                // التعديل هنا: استخدام دالة الخوارزمية وتمرير بيانات المستخدم
-                stream: feedProvider.getAlgorithmicFeed(currentUser),
+                stream: feedProvider.postsStream(categoryId: selectedMode),
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting) {
                     return const Padding(padding: EdgeInsets.all(40.0), child: Center(child: CircularProgressIndicator(color: Color(0xFF5B6CFF))));
@@ -429,4 +441,3 @@ class _FeedScreenState extends State<FeedScreen> {
     );
   }
 }
-

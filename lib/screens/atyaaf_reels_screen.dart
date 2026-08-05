@@ -16,7 +16,7 @@ import '../models/atyaaf_video.dart';
 import '../providers/atyaaf_provider.dart';
 import '../providers/auth_provider.dart';
 import '../services/atyaaf_service.dart';
-import '../services/cloudinary_service.dart';
+import '../services/media_service.dart';
 import 'profile_screen.dart';
 
 class AtyaafReelsScreen extends StatefulWidget {
@@ -104,7 +104,7 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     if (_controllers.containsKey(index)) return;
 
     final video = provider.videos[index];
-    final primaryUrl = _normalizeCloudinaryVideoUrl(video.videoUrl);
+    final primaryUrl = _normalizeVideoUrl(video.videoUrl);
     final fallbackUrl = _service.buildOptimizedVideoUrl(primaryUrl);
     final alternativeUrl = _service.buildFallbackVideoUrl(primaryUrl);
     final hlsUrl = _service.buildOptimizedVideoUrl(primaryUrl, useHls: true);
@@ -181,11 +181,12 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     }
   }
 
-  String _normalizeCloudinaryVideoUrl(String url) {
+  String _normalizeVideoUrl(String url) {
     if (url.isEmpty) return url;
     final uri = Uri.tryParse(url);
     if (uri == null) return url;
 
+    // Handle Cloudinary URLs (for backward compatibility with existing media)
     const uploadPrefix = '/video/upload/';
     final prefixIndex = uri.path.indexOf(uploadPrefix);
     if (prefixIndex < 0) return url;
@@ -293,24 +294,19 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     );
 
     try {
-      final cloudinary = context.read<CloudinaryService>();
+      final mediaService = MediaService();
       final String uploadedUrl;
-      final String publicId = 'kolo_app/atyaf/${currentUser.id}_${DateTime.now().millisecondsSinceEpoch}';
 
       if (kIsWeb) {
-        uploadedUrl = await cloudinary.uploadBytes(
+        uploadedUrl = await mediaService.uploadBytes(
           await video.readAsBytes(),
           video.name,
           isVideo: true,
-          folder: 'kolo_app/atyaf',
-          publicId: publicId,
         );
       } else {
-        uploadedUrl = await cloudinary.uploadFile(
+        uploadedUrl = await mediaService.uploadFile(
           File(video.path),
           isVideo: true,
-          folder: 'kolo_app/atyaf',
-          publicId: publicId,
         );
       }
 
@@ -320,7 +316,6 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
         userId: currentUser.id,
         caption: captionController.text.trim(),
         videoUrl: storedVideoUrl,
-        publicId: publicId,
       );
 
       if (!mounted) return;
@@ -521,7 +516,7 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                 isOwner: authProvider.currentUser?.id == video.userId,
                 onDelete: () async {
                   if (authProvider.currentUser == null) return;
-                  await _service.deleteReel(reelId: video.id, publicId: video.publicId);
+                  await _service.deleteReel(reelId: video.id);
                   await _reloadVideos();
                 },
               );

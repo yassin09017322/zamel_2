@@ -18,9 +18,8 @@ class PostService {
     required String location,
     required String mediaType,
     required String mediaData,
+    required String categoryId,
     String privacy = 'public',
-    String? publicId,
-    String resourceType = 'auto',
   }) async {
     try {
       List<String> hashtags = [];
@@ -34,8 +33,6 @@ class PostService {
         mediaFiles.add({
           'mediaType': mediaType,
           'url': mediaData,
-          'publicId': publicId ?? '',
-          'resourceType': resourceType,
         });
       }
 
@@ -47,8 +44,8 @@ class PostService {
         'location': location,
         'mediaType': mediaType,
         'mediaData': mediaData,
-        'publicId': publicId ?? '',
         'mediaFiles': mediaFiles,
+        'categoryId': categoryId,
         'timestamp': FieldValue.serverTimestamp(),
         'createdAt': FieldValue.serverTimestamp(),
         'commentsCount': 0,
@@ -63,12 +60,16 @@ class PostService {
     }
   }
 
-  static Stream<List<Post>> postsStream() {
-    return _firestore
-        .collection('posts')
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) => Post.fromFirestore(doc)).toList());
+  static Stream<List<Post>> postsStream({String? categoryId}) {
+    Query<Map<String, dynamic>> query = _firestore.collection('posts').orderBy('timestamp', descending: true);
+
+    if (categoryId != null && categoryId.isNotEmpty && categoryId != 'all') {
+      query = query.where('categoryId', isEqualTo: categoryId);
+    }
+
+    return query.snapshots().map((snapshot) {
+      return snapshot.docs.map((doc) => Post.fromFirestore(doc)).toList();
+    });
   }
 
   static Stream<Post?> postStream(String postId) {
@@ -118,7 +119,7 @@ class PostService {
     await addReaction(postId: postId, userId: userId, reactionType: reactionType);
   }
 
-  static Future<void> deletePost({required String postId, List<String>? publicIds}) async {
+  static Future<void> deletePost({required String postId}) async {
     try {
       final docRef = _firestore.collection('posts').doc(postId);
       final snapshot = await docRef.get();
@@ -126,61 +127,9 @@ class PostService {
         return;
       }
 
-      final data = snapshot.data() ?? <String, dynamic>{};
-      final fallbackPublicId = data['publicId'] as String? ?? '';
-      final resolvedPublicIds = <String>[];
-      if (publicIds != null) {
-        resolvedPublicIds.addAll(publicIds.where((id) => id.isNotEmpty));
-      }
-
-      if (resolvedPublicIds.isEmpty) {
-        if (data['mediaFiles'] is List) {
-          for (final rawItem in data['mediaFiles'] as List<dynamic>) {
-            if (rawItem is Map<String, dynamic>) {
-              final filePublicId = rawItem['publicId'] as String? ?? '';
-              if (filePublicId.isNotEmpty) {
-                resolvedPublicIds.add(filePublicId);
-              }
-            } else if (rawItem is Map) {
-              final filePublicId = rawItem['publicId']?.toString() ?? '';
-              if (filePublicId.isNotEmpty) {
-                resolvedPublicIds.add(filePublicId);
-              }
-            }
-          }
-        }
-        if (resolvedPublicIds.isEmpty && fallbackPublicId.isNotEmpty) {
-          resolvedPublicIds.add(fallbackPublicId);
-        }
-      }
-
       await docRef.delete();
-
-      for (final id in resolvedPublicIds) {
-        if (id.isEmpty) continue;
-        try {
-          await deleteCloudinaryAsset(id);
-        } catch (error) {
-          debugPrint('Failed to delete Cloudinary asset: $error');
-        }
-      }
     } catch (e) {
       throw Exception('فشل حذف المنشور: $e');
-    }
-  }
-
-  static Future<void> deleteCloudinaryAsset(String publicId) async {
-    final projectId = Firebase.app().options.projectId;
-    final functionUrl = 'https://us-central1-$projectId.cloudfunctions.net/deleteCloudinaryAsset';
-
-    final response = await http.post(
-      Uri.parse(functionUrl),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'publicId': publicId, 'resourceType': 'auto'}),
-    );
-
-    if (response.statusCode >= 400) {
-      throw Exception('Cloud Function delete failed: ${response.statusCode} ${response.body}');
     }
   }
 

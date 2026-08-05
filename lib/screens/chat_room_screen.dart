@@ -22,7 +22,7 @@ import '../services/audio_service.dart';
 import '../services/call_service.dart';
 import '../services/chat_service.dart';
 import '../services/chat_sync_repository.dart';
-import '../services/cloudinary_service.dart';
+import '../services/media_service.dart';
 import '../services/isar_service.dart';
 import '../screens/call_screen.dart';
 import '../widgets/message_bubble.dart';
@@ -46,10 +46,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   final ChatService _chatService = ChatService();
   final ImagePicker _imagePicker = ImagePicker();
   final AudioCommentService _audioService = AudioCommentService();
-  final CloudinaryService _cloudinaryService = CloudinaryService(
-    cloudName: AppConfig.cloudinaryCloudName,
-    uploadPreset: AppConfig.cloudinaryUploadPreset,
-  );
+  final MediaService _mediaService = MediaService();
 
   ChatSyncRepository? _chatSyncRepository;
   final ScrollController _scrollController = ScrollController();
@@ -223,7 +220,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     Uint8List? webBytes,
     String? webFileName,
     String? folder,
-    String? publicIdOverride,
     String? fileType,
     int? fileSize,
   }) async {
@@ -254,71 +250,45 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       final fileName =
           webFileName ??
           '${DateTime.now().millisecondsSinceEpoch}_${file?.path.split('/').last ?? 'file'}';
-      final resolvedPublicId =
-          publicIdOverride ??
-          '${folder ?? 'chat'}/${DateTime.now().millisecondsSinceEpoch}';
       String downloadUrl = '';
-      String publicId = resolvedPublicId;
 
       if (mediaType == 'file') {
         if (kIsWeb && webBytes != null) {
-          downloadUrl = await _cloudinaryService.uploadBytes(
+          downloadUrl = await _mediaService.uploadBytes(
             webBytes,
             fileName,
             isVideo: false,
-            folder: 'chat_files',
-            publicId: publicId,
-            resourceType: 'raw',
           );
         } else if (file != null) {
-          downloadUrl = await _cloudinaryService.uploadFile(
+          downloadUrl = await _mediaService.uploadFile(
             file,
             isVideo: false,
-            folder: 'chat_files',
-            publicId: publicId,
-            resourceType: 'raw',
           );
         }
       } else if (mediaType == ChatMessageType.audio) {
         if (kIsWeb && webBytes != null) {
-          downloadUrl = await _cloudinaryService.uploadBytes(
+          downloadUrl = await _mediaService.uploadBytes(
             webBytes,
             fileName,
             isVideo: false,
-            folder: 'chat_audio',
-            publicId: publicId,
-            resourceType: 'video',
           );
         } else if (file != null) {
-          downloadUrl = await _cloudinaryService.uploadFile(
+          downloadUrl = await _mediaService.uploadFile(
             file,
             isVideo: false,
-            folder: 'chat_audio',
-            publicId: publicId,
-            resourceType: 'video',
           );
         }
       } else {
         if (kIsWeb && webBytes != null) {
-          downloadUrl = await _cloudinaryService.uploadBytes(
+          downloadUrl = await _mediaService.uploadBytes(
             webBytes,
             fileName,
             isVideo: mediaType == ChatMessageType.video,
-            folder: 'chat',
-            publicId: publicId,
-            resourceType: mediaType == ChatMessageType.video
-                ? 'video'
-                : 'image',
           );
         } else if (file != null) {
-          downloadUrl = await _cloudinaryService.uploadFile(
+          downloadUrl = await _mediaService.uploadFile(
             file,
             isVideo: mediaType == ChatMessageType.video,
-            folder: 'chat',
-            publicId: publicId,
-            resourceType: mediaType == ChatMessageType.video
-                ? 'video'
-                : 'image',
           );
         }
       }
@@ -339,7 +309,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         text: textPlaceholder,
         mediaType: mediaType,
         mediaUrl: downloadUrl,
-        publicId: publicId,
         fileName: mediaType == 'file' ? fileName : '',
         fileType: mediaType == 'file' ? (fileType ?? '') : '',
         fileSize: mediaType == 'file' ? (fileSize ?? 0) : 0,
@@ -637,7 +606,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       await _chatService.deleteMessage(
         roomId: widget.roomId,
         messageId: message.firestoreId,
-        publicId: message.publicId,
       );
     }
   }
@@ -714,7 +682,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             text: '🎤 مقطع صوتي',
             mediaType: ChatMessageType.audio,
             mediaUrl: uploadResult['url'] as String,
-            publicId: uploadResult['publicId'] as String,
             status: MessageStatus.sent,
           );
         }
@@ -785,6 +752,15 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                       spacing: 16,
                       runSpacing: 16,
                       children: [
+                        _buildAttachmentIcon(
+                          Icons.emoji_emotions_rounded,
+                          const Color(0xFFF59E0B),
+                          'إيموجي',
+                          () {
+                            Navigator.pop(context);
+                            _toggleEmojiPicker();
+                          },
+                        ),
                         _buildAttachmentIcon(
                           Icons.insert_drive_file_rounded,
                           const Color(0xFF5B6CFF),

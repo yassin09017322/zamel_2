@@ -1,9 +1,12 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/app_localizations.dart';
+import '../models/category_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/settings_provider.dart';
+import '../services/category_service.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -52,6 +55,9 @@ class SettingsScreen extends StatelessWidget {
                   onChanged: (value) async {
                     if (value != null) {
                       await settingsProvider.setLanguage(value);
+                      if (context.mounted) {
+                        context.setLocale(Locale(value));
+                      }
                     }
                   },
                 ),
@@ -61,6 +67,39 @@ class SettingsScreen extends StatelessWidget {
                 subtitle: Text(l10n.settingsCustomModeSubtitle),
                 value: settingsProvider.privateMode,
                 onChanged: settingsProvider.togglePrivateMode,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _SettingsSection(
+            title: 'feed_mode_title'.tr(),
+            children: [
+              FutureBuilder<List<CategoryModel>>(
+                future: CategoryService.fetchCategories(),
+                builder: (context, snapshot) {
+                  final categories = snapshot.data ?? [];
+                  final options = <CategoryModel>[CategoryModel(id: 'all'), ...categories];
+
+                  return ListTile(
+                    leading: const Icon(Icons.filter_list),
+                    title: Text('feed_mode'.tr()),
+                    subtitle: Text((settingsProvider.feedMode).tr()),
+                    trailing: DropdownButton<String>(
+                      value: options.any((item) => item.id == settingsProvider.feedMode) ? settingsProvider.feedMode : 'all',
+                      items: options.map((item) {
+                        return DropdownMenuItem<String>(
+                          value: item.id,
+                          child: Text(item.id.tr()),
+                        );
+                      }).toList(),
+                      onChanged: (value) async {
+                        if (value != null) {
+                          await settingsProvider.setFeedMode(value);
+                        }
+                      },
+                    ),
+                  );
+                },
               ),
             ],
           ),
