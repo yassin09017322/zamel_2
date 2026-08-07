@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 class AtyaafVideo {
   final String id;
   final String userId;
+  final String username; // تم إضافة الاسم هنا
   final String videoUrl;
   final String thumbnailUrl;
   final String title;
@@ -19,6 +20,7 @@ class AtyaafVideo {
   const AtyaafVideo({
     required this.id,
     this.userId = '',
+    this.username = '', // تم الإضافة في المُنشئ
     required this.videoUrl,
     required this.thumbnailUrl,
     required this.title,
@@ -42,6 +44,7 @@ class AtyaafVideo {
     return AtyaafVideo(
       id: snapshot.id,
       userId: (data['userId'] as String?) ?? '',
+      username: (data['username'] as String?) ?? 'مستخدم', // تم الإضافة لجلب البيانات
       videoUrl: (data['videoUrl'] as String?) ?? '',
       thumbnailUrl: (data['thumbnailUrl'] as String?) ?? '',
       title: titleText,
@@ -58,6 +61,7 @@ class AtyaafVideo {
   Map<String, dynamic> toFirestore() {
     return {
       'userId': userId,
+      'username': username, // تم الإضافة لرفع البيانات
       'videoUrl': videoUrl,
       'thumbnailUrl': thumbnailUrl,
       'title': title,

@@ -1,9 +1,7 @@
 import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
-import 'package:http/http.dart' as http;
 
 import '../models/post.dart';
 
@@ -79,7 +77,6 @@ class PostService {
     });
   }
 
-  // تم تصحيح كل الدوال هنا لتستقبل المتغيرات بأسماءها (Named Parameters)
   static Future<void> toggleLike({required String postId, required String userId}) async {
     try {
       final docRef = _firestore.collection('posts').doc(postId);

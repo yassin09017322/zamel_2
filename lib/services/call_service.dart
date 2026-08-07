@@ -16,6 +16,7 @@ class CallSession {
   final String receiverName;
   final String type;
   final bool isCaller;
+  final bool isReceiverOnline; // تم الإضافة: لتحديد نوع نغمة الرنين
   final RTCPeerConnection peerConnection;
   final MediaStream localStream;
   MediaStream? remoteStream;
@@ -29,7 +30,6 @@ class CallSession {
   final StreamController<String> _statusController = StreamController.broadcast();
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _callSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _candidateSubscription;
-  // removed unused helper
   Timer? _autoEndTimer;
   String currentFacingMode = 'user';
 
@@ -42,6 +42,7 @@ class CallSession {
     required this.receiverName,
     required this.type,
     required this.isCaller,
+    this.isReceiverOnline = false, // تم الإضافة
     required this.peerConnection,
     required this.localStream,
   });
@@ -58,7 +59,7 @@ class CallSession {
     if (status == 'connected' && startedAt == null) {
       startedAt = DateTime.now();
     }
-    if (status == 'ended' || status == 'rejected' || status == 'canceled') {
+    if (status == 'ended' || status == 'rejected' || status == 'canceled' || status == 'missed') {
       endedAt ??= DateTime.now();
     }
     _statusController.add(status);
@@ -78,7 +79,8 @@ class CallSession {
       final data = snapshot.data();
       final status = data == null ? null : data['status'] as String?;
       if (status == 'calling' || status == 'ringing') {
-        await docRef.update({'status': 'ended'});
+        // تم التعديل: إذا انتهى الوقت ولم يرد، تُعتبر مكالمة فائتة
+        await docRef.update({'status': 'missed'}); 
       }
     });
   }
@@ -234,6 +236,7 @@ class CallService {
     required String receiverName,
     required String type,
     required bool isCaller,
+    required bool isReceiverOnline, // تم الإضافة
     required MediaStream localStream,
     required RTCPeerConnection peerConnection,
   }) async {
@@ -246,6 +249,7 @@ class CallService {
       receiverName: receiverName,
       type: type,
       isCaller: isCaller,
+      isReceiverOnline: isReceiverOnline, // تم الإضافة
       peerConnection: peerConnection,
       localStream: localStream,
     );
@@ -281,6 +285,16 @@ class CallService {
     final callDocRef = _firestore.collection('calls').doc();
     final localStream = await _getUserMedia(video: type == 'video');
     final peerConnection = await _createPeerConnection();
+    
+    // تم الإضافة: التحقق من حالة المستخدم (متصل أم لا) قبل الاتصال
+    bool isOnline = false;
+    try {
+      final userDoc = await _firestore.collection('users').doc(receiverId).get();
+      if (userDoc.exists) {
+        isOnline = userDoc.data()?['isOnline'] ?? false;
+      }
+    } catch (_) {}
+
     await _prepareSession(
       callId: callDocRef.id,
       chatId: chatId,
@@ -290,6 +304,7 @@ class CallService {
       receiverName: receiverName,
       type: type,
       isCaller: true,
+      isReceiverOnline: isOnline, // تمرير الحالة هنا
       localStream: localStream,
       peerConnection: peerConnection,
     );
@@ -356,6 +371,7 @@ class CallService {
       receiverName: receiverName,
       type: type,
       isCaller: false,
+      isReceiverOnline: true, // الطرف المجيب متصل بالضرورة
       localStream: localStream,
       peerConnection: peerConnection,
     );
@@ -445,7 +461,8 @@ class CallService {
         await activeSession?.peerConnection.setRemoteDescription(remoteDescription);
       }
 
-      if (status == 'rejected' || status == 'ended' || status == 'canceled') {
+      // تم التعديل: إضافة status == 'missed' لإنهاء المكالمة أيضاً
+      if (status == 'rejected' || status == 'ended' || status == 'canceled' || status == 'missed') {
         final session = activeSession;
         activeSession = null;
         if (session != null) {

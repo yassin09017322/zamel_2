@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:zamel_appp/src/platform_file.dart';
+import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
@@ -15,8 +15,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/atyaaf_video.dart';
 import '../providers/atyaaf_provider.dart';
 import '../providers/auth_provider.dart';
+import '../services/atyaaf_reel_upload_service.dart';
 import '../services/atyaaf_service.dart';
-import '../services/media_service.dart';
 import 'profile_screen.dart';
 
 class AtyaafReelsScreen extends StatefulWidget {
@@ -30,9 +30,12 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
   late final PageController _pageController;
   final Map<int, VideoPlayerController> _controllers = <int, VideoPlayerController>{};
   final AtyaafService _service = AtyaafService();
+  final AtyaafReelUploadService _uploadService = AtyaafReelUploadService();
   final Map<int, String?> _controllerErrors = <int, String?>{};
   int _currentIndex = 0;
   final Set<String> _countedViewIds = <String>{};
+  bool _isUploadingReel = false;
+  double _uploadProgress = 0.0;
 
   @override
   void initState() {
@@ -89,7 +92,7 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
 
   VideoPlayerController _createNetworkController(String url) {
     if (kIsWeb) {
-      return VideoPlayerController.network(url);
+      return VideoPlayerController.networkUrl(Uri.parse(url));
     }
 
     return VideoPlayerController.networkUrl(
@@ -114,7 +117,6 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     try {
       await controller.initialize();
       await controller.setLooping(true);
-      // clear any previous error
       _controllerErrors.remove(index);
       if (mounted) setState(() {});
     } catch (error) {
@@ -186,7 +188,6 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     final uri = Uri.tryParse(url);
     if (uri == null) return url;
 
-    // Handle Cloudinary URLs (for backward compatibility with existing media)
     const uploadPrefix = '/video/upload/';
     final prefixIndex = uri.path.indexOf(uploadPrefix);
     if (prefixIndex < 0) return url;
@@ -220,7 +221,6 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
         if (shouldPlay) {
           await entry.value.play();
           await entry.value.setVolume(1.0);
-          // increment views once per session for this video
           try {
             final video = provider.videos[entry.key];
             if (!_countedViewIds.contains(video.id)) {
@@ -245,6 +245,8 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
   }
 
   Future<void> _uploadReel(BuildContext context) async {
+    if (_isUploadingReel) return;
+
     final authProvider = context.read<AuthProvider>();
     final currentUser = authProvider.currentUser;
 
@@ -287,147 +289,211 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
 
     if (!mounted) return;
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator(color: Color(0xFFE94057))),
-    );
+    final previewConfirmed = await _showVideoPreviewDialog(video);
+    if (previewConfirmed != true) return;
+
+    setState(() {
+      _isUploadingReel = true;
+      _uploadProgress = 0.0;
+    });
 
     try {
-      final mediaService = MediaService();
-      final String uploadedUrl;
-
-      if (kIsWeb) {
-        uploadedUrl = await mediaService.uploadBytes(
-          await video.readAsBytes(),
-          video.name,
-          isVideo: true,
-        );
-      } else {
-        uploadedUrl = await mediaService.uploadFile(
-          File(video.path),
-          isVideo: true,
-        );
-      }
-
-      final storedVideoUrl = uploadedUrl;
-
-      await _service.addReel(
+      await _uploadService.uploadAndCreateReel(
+        videoFile: video,
         userId: currentUser.id,
         caption: captionController.text.trim(),
-        videoUrl: storedVideoUrl,
+        onProgress: (progress) {
+          if (!mounted) return;
+          setState(() => _uploadProgress = progress);
+        },
       );
 
       if (!mounted) return;
-      Navigator.pop(context);
       await _reloadVideos();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم رفع الريل بنجاح ✅')));
     } catch (error) {
       if (mounted) {
-        Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل رفع الريل: $error')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isUploadingReel = false);
       }
     }
   }
 
-  void _showCommentsSheet(BuildContext context, AtyaafVideo video) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        final commentController = TextEditingController();
-        bool isTyping = false;
+  Future<bool> _showVideoPreviewDialog(XFile videoFile) async {
+    final controller = _buildPreviewController(videoFile);
+    try {
+      await controller.initialize();
+    } catch (error) {
+      debugPrint('Preview initialization failed: $error');
+    }
 
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Directionality(
-              textDirection: TextDirection.rtl,
-              child: Container(
-                height: MediaQuery.of(context).size.height * 0.65,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-                ),
-                child: Column(
-                  children: [
-                    const SizedBox(height: 12),
-                    Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
-                    const SizedBox(height: 16),
-                    const Text('التعليقات', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                    const Divider(),
-                    Expanded(
-                      child: Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.chat_bubble_outline, size: 50, color: Colors.grey[400]),
-                            const SizedBox(height: 10),
-                            Text('كن أول من يترك تعليقاً!', style: TextStyle(color: Colors.grey[600])),
-                          ],
-                        ),
-                      ),
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('معاينة الفيديو', textAlign: TextAlign.center),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (controller.value.isInitialized)
+                  AspectRatio(
+                    aspectRatio: controller.value.aspectRatio > 0 ? controller.value.aspectRatio : 16 / 9,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(16),
+                      child: VideoPlayer(controller),
                     ),
-                    Container(
-                      padding: EdgeInsets.only(
-                        left: 16, right: 16, top: 12,
-                        bottom: MediaQuery.of(context).viewInsets.bottom + 12
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))],
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: commentController,
-                              onChanged: (val) => setModalState(() => isTyping = val.trim().isNotEmpty),
-                              decoration: InputDecoration(
-                                hintText: 'أضف تعليقاً...',
-                                filled: true,
-                                fillColor: Colors.grey[100],
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          GestureDetector(
-                            onTap: () {
-                              if (isTyping) {
-                                commentController.clear();
-                                setModalState(() => isTyping = false);
-                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال التعليق')));
-                              } else {
-                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اضغط مطولاً لتسجيل رسالة صوتية 🎤')));
-                              }
-                            },
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: isTyping ? const Color(0xFF5B6CFF) : const Color(0xFF2EC7A5),
-                                shape: BoxShape.circle,
-                              ),
-                              child: Icon(
-                                isTyping ? Icons.send_rounded : Icons.mic,
-                                color: Colors.white,
-                                size: 22,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+                  )
+                else
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Text('تعذر معاينة هذا الفيديو الآن، لكن يمكنك المتابعة إلى الرفع.'),
+                  ),
+                const SizedBox(height: 12),
+                const Text('سيتم رفع الفيديو إلى الخادم ثم حفظ الرابط.', textAlign: TextAlign.center),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('إلغاء')),
+            ElevatedButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('متابعة الرفع')),
+          ],
         );
       },
     );
+
+    await controller.pause();
+    await controller.dispose();
+    return confirmed == true;
+  }
+
+  VideoPlayerController _buildPreviewController(XFile videoFile) {
+    final parsedUri = Uri.tryParse(videoFile.path);
+    if (parsedUri != null && parsedUri.scheme == 'content') {
+      return VideoPlayerController.contentUri(parsedUri);
+    }
+
+    if (parsedUri != null &&
+        (parsedUri.scheme == 'http' ||
+            parsedUri.scheme == 'https' ||
+            parsedUri.scheme == 'blob')) {
+      return VideoPlayerController.networkUrl(parsedUri);
+    }
+
+    if (kIsWeb) {
+      return VideoPlayerController.networkUrl(Uri.parse(videoFile.path));
+    }
+
+    return VideoPlayerController.file(File(videoFile.path));
+  }
+
+  Future<void> _showCommentsSheet(BuildContext context, AtyaafVideo video) async {
+    final commentController = TextEditingController();
+    try {
+      await showModalBottomSheet(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (context) {
+          bool isTyping = false;
+
+          return StatefulBuilder(
+            builder: (context, setModalState) {
+              return Directionality(
+                textDirection: TextDirection.rtl,
+                child: Container(
+                  height: MediaQuery.of(context).size.height * 0.65,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                  ),
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 12),
+                      Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
+                      const SizedBox(height: 16),
+                      const Text('التعليقات', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const Divider(),
+                      Expanded(
+                        child: Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.chat_bubble_outline, size: 50, color: Colors.grey[400]),
+                              const SizedBox(height: 10),
+                              Text('كن أول من يترك تعليقاً!', style: TextStyle(color: Colors.grey[600])),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: EdgeInsets.only(
+                          left: 16, right: 16, top: 12,
+                          bottom: MediaQuery.of(context).viewInsets.bottom + 12
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))],
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: commentController,
+                                onChanged: (val) => setModalState(() => isTyping = val.trim().isNotEmpty),
+                                decoration: InputDecoration(
+                                  hintText: 'أضف تعليقاً...',
+                                  filled: true,
+                                  fillColor: Colors.grey[100],
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              onTap: () {
+                                if (isTyping) {
+                                  commentController.clear();
+                                  setModalState(() => isTyping = false);
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال التعليق')));
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اضغط مطولاً لتسجيل رسالة صوتية 🎤')));
+                                }
+                              },
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 200),
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: isTyping ? const Color(0xFF5B6CFF) : const Color(0xFF2EC7A5),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  isTyping ? Icons.send_rounded : Icons.mic,
+                                  color: Colors.white,
+                                  size: 22,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    } catch (e) {
+      debugPrint("Error showing comments: $e");
+    }
   }
 
   @override
@@ -460,9 +526,14 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
               const Text('كن أول من يشارك لحظاته وإبداعاته\nمع مجتمع زامل!', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 16)),
               const SizedBox(height: 32),
               ElevatedButton.icon(
-                onPressed: () => _uploadReel(context),
-                icon: const Icon(Icons.upload_rounded, color: Colors.white),
-                label: const Text('رفع أول مقطع الآن', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                onPressed: _isUploadingReel ? null : () => _uploadReel(context),
+                icon: _isUploadingReel
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.upload_rounded, color: Colors.white),
+                label: Text(
+                  _isUploadingReel ? 'جاري الرفع...' : 'رفع أول مقطع الآن',
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFE94057),
                   padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
@@ -479,6 +550,18 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
       backgroundColor: Colors.black,
       body: Stack(
         children: [
+          if (_isUploadingReel)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: LinearProgressIndicator(
+                value: _uploadProgress.clamp(0.0, 1.0),
+                minHeight: 3,
+                backgroundColor: Colors.white24,
+                color: const Color(0xFFE94057),
+              ),
+            ),
           PageView.builder(
             controller: _pageController,
             scrollDirection: Axis.vertical,
@@ -536,11 +619,14 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                       style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, shadows: [Shadow(color: Colors.black54, blurRadius: 10)])
                     ),
                     GestureDetector(
-                      onTap: () => _uploadReel(context),
+                      onTap: _isUploadingReel ? null : () => _uploadReel(context),
                       child: Container(
                         padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(color: Colors.black.withOpacity(0.4), shape: BoxShape.circle, border: Border.all(color: Colors.white38, width: 1)),
-                        child: const Icon(Icons.camera_alt_rounded, color: Colors.white, size: 26),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.add, color: Colors.white),
                       ),
                     ),
                   ],
@@ -554,7 +640,7 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
   }
 }
 
-class _AtyaafVideoCard extends StatefulWidget {
+class _AtyaafVideoCard extends StatelessWidget {
   final AtyaafVideo video;
   final VideoPlayerController? controller;
   final String? initError;
@@ -568,10 +654,10 @@ class _AtyaafVideoCard extends StatefulWidget {
   final VoidCallback onDelete;
 
   const _AtyaafVideoCard({
-    Key? key,
+    super.key,
     required this.video,
     required this.controller,
-    this.initError,
+    required this.initError,
     required this.isPlaying,
     required this.isSaved,
     required this.onSave,
@@ -580,496 +666,90 @@ class _AtyaafVideoCard extends StatefulWidget {
     required this.onShare,
     required this.isOwner,
     required this.onDelete,
-  }) : super(key: key);
-
-  @override
-  State<_AtyaafVideoCard> createState() => _AtyaafVideoCardState();
-}
-
-class _AtyaafVideoCardState extends State<_AtyaafVideoCard> {
-  String? _myReaction;
-  bool _showPlaybackFeedback = false;
-  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _viewsSub;
-  late int _viewsLocal;
-
-  static const Map<String, Map<String, dynamic>> _zamelReactions = {
-    'like': {'emoji': '👍', 'label': 'أوافق', 'color': Color(0xFF5B6CFF)},
-    'love': {'emoji': '❤️', 'label': 'أبدعت', 'color': Color(0xFFE94057)},
-    'haha': {'emoji': '😂', 'label': 'ضحكتني', 'color': Color(0xFFF2C94C)},
-    'spot_on': {'emoji': '🎯', 'label': 'في الصميم', 'color': Color(0xFF2EC7A5)},
-    'support': {'emoji': '🤝', 'label': 'دعم', 'color': Color(0xFF8A2387)},
-  };
-
-  Future<void> _togglePlayback() async {
-    final controller = widget.controller;
-    if (controller == null || !controller.value.isInitialized) return;
-
-    if (controller.value.isPlaying) {
-      await controller.pause();
-    } else {
-      await controller.play();
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _showPlaybackFeedback = true;
-    });
-
-    await Future.delayed(const Duration(milliseconds: 400));
-    if (mounted) {
-      setState(() {
-        _showPlaybackFeedback = false;
-      });
-    }
-  }
-
-  void _showZamelReactions(BuildContext context) {
-    showGeneralDialog(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: '',
-      transitionDuration: const Duration(milliseconds: 200),
-      pageBuilder: (ctx, anim1, anim2) {
-        return Align(
-          alignment: Alignment.centerRight,
-          child: Container(
-            margin: const EdgeInsets.only(right: 60, bottom: 80),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.8),
-              borderRadius: BorderRadius.circular(30),
-              border: Border.all(color: Colors.white24),
-            ),
-            child: Material(
-              color: Colors.transparent,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: _zamelReactions.entries.map((entry) {
-                  return GestureDetector(
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      setState(() => _myReaction = entry.key);
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Column(
-                        children: [
-                          Text(entry.value['emoji'], style: const TextStyle(fontSize: 28)),
-                          const SizedBox(height: 4),
-                          Text(
-                            entry.value['label'], 
-                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: entry.value['color'])
-                          ),
-                        ],
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-          ),
-        );
-      },
-      transitionBuilder: (ctx, anim1, anim2, child) {
-        return Transform.scale(scale: anim1.value, child: Opacity(opacity: anim1.value, child: child));
-      },
-    );
-  }
+  });
 
   @override
   Widget build(BuildContext context) {
-    final service = AtyaafService();
-    final thumbnailUrl = widget.video.thumbnailUrl.isNotEmpty
-        ? service.buildOptimizedThumbnailUrl(widget.video.thumbnailUrl)
-        : service.buildOptimizedThumbnailUrl(widget.video.videoUrl);
-
-    final reactionData = _myReaction != null ? _zamelReactions[_myReaction] : null;
-
-    return Stack(
-      children: [
-        Positioned.fill(
-            child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 250),
-            child: widget.controller != null && widget.controller!.value.isInitialized
-                ? FittedBox(
-                    key: ValueKey('video-${widget.video.id}'),
-                    fit: BoxFit.cover,
-                    child: SizedBox(
-                      width: widget.controller!.value.size.width > 0 ? widget.controller!.value.size.width : 1,
-                      height: widget.controller!.value.size.height > 0 ? widget.controller!.value.size.height : 1,
-                      child: VideoPlayer(widget.controller!),
-                    ),
-                  )
-                : (kIsWeb && widget.initError != null && widget.initError!.isNotEmpty)
-                    ? WebVideoPlayer(url: service.buildOptimizedVideoUrl(widget.video.videoUrl), viewId: widget.video.id)
-                    : Stack(
-                        children: [
-                          CachedNetworkImage(
-                        key: ValueKey('thumb-${widget.video.id}'),
-                        imageUrl: thumbnailUrl,
-                        fit: BoxFit.cover,
-                        width: double.infinity,
-                        height: double.infinity,
-                        placeholder: (context, url) => const Center(child: CircularProgressIndicator(color: Color(0xFFE94057))),
-                        errorWidget: (context, url, error) => const Icon(Icons.broken_image, color: Colors.grey, size: 50),
-                          ),
-                          if (widget.initError != null && widget.initError!.isNotEmpty)
-                            Positioned.fill(
-                              child: Container(
-                                color: Colors.black54,
-                                alignment: Alignment.center,
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(Icons.error_outline, color: Colors.white, size: 48),
-                                    const SizedBox(height: 8),
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                                      child: Text(
-                                        'فشل تهيئة الفيديو (تحقق من رابط الفيديو أو إعدادات CORS)',
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(color: Colors.white),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-          ),
-        ),
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: _togglePlayback,
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 180),
-              opacity: _showPlaybackFeedback ? 1.0 : 0.0,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.all(18),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.45),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white24, width: 1),
-                  ),
-                  child: Icon(
-                    widget.controller != null && widget.controller!.value.isPlaying
-                        ? Icons.pause_rounded
-                        : Icons.play_arrow_rounded,
-                    color: Colors.white,
-                    size: 36,
+    return Container(
+      color: Colors.black,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (initError != null)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text('عذراً، فشل تحميل الفيديو: $initError', style: const TextStyle(color: Colors.redAccent), textAlign: TextAlign.center),
+              ),
+            )
+          else if (controller != null && controller!.value.isInitialized)
+            GestureDetector(
+              onTap: () {
+                if (controller!.value.isPlaying) {
+                  controller!.pause();
+                } else {
+                  controller!.play();
+                }
+              },
+              child: SizedBox.expand(
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                    width: controller!.value.size.width,
+                    height: controller!.value.size.height,
+                    child: VideoPlayer(controller!),
                   ),
                 ),
               ),
-            ),
-          ),
-        ),
-        Positioned.fill(
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.bottomCenter,
-                end: Alignment.topCenter,
-                colors: [Colors.black.withOpacity(0.8), Colors.transparent, Colors.black.withOpacity(0.2)],
-              ),
-            ),
-          ),
-        ),
-        Positioned(
-          top: 92,
-          left: 16,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.34),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.play_circle_fill_rounded, color: Colors.white, size: 16),
-                SizedBox(width: 6),
-                Text('أطياف', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ),
-        ),
-        Directionality(
-          textDirection: TextDirection.rtl,
-          child: Positioned(
-            left: 16,
-            right: 88,
-            bottom: 24,
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.28),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  GestureDetector(
-                    onTap: () {
-                      if (widget.video.userId.isEmpty) return;
-                      Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProfileScreen(userId: widget.video.userId)));
-                    },
-                    child: Row(
-                      children: [
-                        const CircleAvatar(radius: 18, backgroundColor: Color(0xFF5B6CFF), child: Icon(Icons.person, color: Colors.white, size: 20)),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            widget.video.title.isNotEmpty ? widget.video.title : 'مستخدم زامل',
-                            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    widget.video.description.isNotEmpty ? widget.video.description : 'محتوى قصير ومفيد',
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        if (widget.isOwner)
+            )
+          else
+            const Center(child: CircularProgressIndicator(color: Color(0xFFE94057))),
+          
           Positioned(
-            top: 92,
-            right: 12,
-            child: GestureDetector(
-              onTap: widget.onDelete,
-              child: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.45),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(Icons.delete_outline_rounded, color: Colors.white, size: 24),
-              ),
-            ),
-          ),
-        Positioned(
-          right: 12,
-          bottom: 24,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              GestureDetector(
-                onLongPress: () => _showZamelReactions(context),
-                onTap: () {
-                  setState(() => _myReaction = _myReaction == null ? 'like' : null);
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Column(
-                    children: [
-                      Text(reactionData?['emoji'] ?? '🤍', style: const TextStyle(fontSize: 30)),
-                      const SizedBox(height: 4),
-                      Text(
-                        reactionData?['label'] ?? 'إعجاب',
-                        style: TextStyle(color: reactionData?['color'] ?? Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              _buildInteractionBtn(Icons.chat_bubble_rounded, 'تعليق', widget.onComment),
-              const SizedBox(height: 14),
-              _buildInteractionBtn(widget.isSaved ? Icons.bookmark : Icons.bookmark_border, 'حفظ', widget.onSave, iconColor: widget.isSaved ? const Color(0xFFE94057) : Colors.white),
-              const SizedBox(height: 14),
-              GestureDetector(
-                onTap: _onSharePressed,
-                child: Column(
-                  children: [
-                    Icon(Icons.share_rounded, color: Colors.white, size: 32),
-                    const SizedBox(height: 6),
-                    const Text('مشاركة', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold, shadows: [Shadow(color: Colors.black, blurRadius: 4)])),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-              if (widget.video.relatedContentRef.isNotEmpty) ...[
-                const SizedBox(height: 14),
-                _buildInteractionBtn(Icons.open_in_new_rounded, 'محتوى', widget.onRelatedContent),
-              ],
-            ],
-          ),
-        ),
-        Positioned(
-          left: 16,
-          bottom: 24,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.3),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Row(
+            right: 16,
+            bottom: 100,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                const Icon(Icons.remove_red_eye_outlined, color: Colors.white, size: 16),
-                const SizedBox(width: 6),
-                Text('$_viewsLocal مشاهد', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                _buildActionButton(isSaved ? Icons.bookmark : Icons.bookmark_border, onSave, color: isSaved ? const Color(0xFFE94057) : Colors.white),
+                const SizedBox(height: 16),
+                _buildActionButton(Icons.comment, onComment),
+                const SizedBox(height: 16),
+                _buildActionButton(Icons.share, onShare),
+                if (isOwner) ...[
+                  const SizedBox(height: 16),
+                  _buildActionButton(Icons.delete, onDelete, color: Colors.redAccent),
+                ],
               ],
             ),
           ),
-        ),
-        if (!widget.isPlaying)
-          const Positioned.fill(
-            child: Center(
-              child: Icon(Icons.play_arrow_rounded, color: Colors.white70, size: 80),
+          Positioned(
+            left: 16,
+            bottom: 40,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('@${video.username}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                const SizedBox(height: 8),
+                if (video.caption != null && video.caption!.isNotEmpty)
+                  SizedBox(
+                    width: MediaQuery.of(context).size.width * 0.6,
+                    child: Text(video.caption!, style: const TextStyle(color: Colors.white), maxLines: 2, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
             ),
           ),
-      ],
+        ],
+      ),
     );
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _viewsLocal = widget.video.viewsCount;
-    _viewsSub = FirebaseFirestore.instance.collection('atyaf_reels').doc(widget.video.id).snapshots().listen((snap) {
-      final data = snap.data();
-      if (data == null) return;
-      final v = data['views'] ?? data['viewsCount'];
-      if (v is int) {
-        if (mounted) setState(() => _viewsLocal = v);
-      }
-    }, onError: (_) {});
-  }
-
-  @override
-  void dispose() {
-    _viewsSub?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _onSharePressed() async {
-    widget.onShare();
-    await _showShareOptions();
-  }
-
-  Future<void> _shareText(String text, String subject) async {
-    try {
-      await Share.share(text, subject: subject);
-    } catch (error) {
-      debugPrint('Share failed: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذرت المشاركة، حاول مرة أخرى')));
-      }
-    }
-  }
-
-  Future<void> _showShareOptions() async {
-    final url = widget.video.videoUrl;
-    final title = widget.video.title.isNotEmpty ? widget.video.title : 'أطياف';
-    final text = '$title\n$url';
-
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (ctx) {
-        return SafeArea(
-          child: Wrap(
-            children: [
-              ListTile(
-                leading: const Icon(Icons.copy),
-                title: const Text('نسخ الرابط'),
-                onTap: () async {
-                  await Clipboard.setData(ClipboardData(text: url));
-                  Navigator.pop(ctx);
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نسخ الرابط')));
-                  }
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.message, color: Color(0xFF25D366)),
-                title: const Text('WhatsApp / الرسائل'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _shareText(text, title);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.thumb_up, color: Color(0xFF1877F2)),
-                title: const Text('Facebook'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _shareText(text, title);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.send, color: Color(0xFF26A5E4)),
-                title: const Text('Telegram'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _shareText(text, title);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.alternate_email, color: Colors.black),
-                title: const Text('X / Twitter'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _shareText(text, title);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.camera_alt, color: Color(0xFFC13584)),
-                title: const Text('Instagram'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _shareText(text, title);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.music_note, color: Colors.black),
-                title: const Text('TikTok'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _shareText(text, title);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.more_horiz),
-                title: const Text('مشاركة عبر النظام'),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await _shareText(text, title);
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-
-
-  Widget _buildInteractionBtn(IconData icon, String label, VoidCallback onTap, {Color iconColor = Colors.white}) {
+  Widget _buildActionButton(IconData icon, VoidCallback onTap, {Color color = Colors.white}) {
     return GestureDetector(
       onTap: onTap,
       child: Column(
         children: [
-          Icon(icon, color: iconColor, size: 32),
-          const SizedBox(height: 6),
-          Text(label, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold, shadows: const [Shadow(color: Colors.black, blurRadius: 4)])),
+          Icon(icon, color: color, size: 32),
         ],
       ),
     );

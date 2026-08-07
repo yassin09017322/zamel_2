@@ -33,6 +33,11 @@ class AudioCommentService {
   Stream<audioplayers.PlayerState> get playerStateStream => _player.onPlayerStateChanged;
 
   Future<bool> checkPermission() async {
+    // التعديل هنا: حماية التطبيق من التجميد في حالة الويب
+    if (kIsWeb) {
+      return true; // المتصفح سيتولى طلب الصلاحية تلقائياً
+    }
+    
     final status = await Permission.microphone.request();
     return status.isGranted;
   }

@@ -1,5 +1,5 @@
 import 'dart:async';
-import 'package:zamel_appp/src/platform_file.dart';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -12,8 +12,6 @@ import 'package:timeago/timeago.dart' as timeago;
 
 import '../widgets/emoji_picker.dart';
 import '../widgets/sticker_picker.dart';
-
-import '../config.dart';
 import '../models/app_user.dart';
 import '../models/chat_message.dart';
 import '../models/chat_room.dart';
@@ -64,9 +62,12 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   bool _isRecording = false;
   bool _isInputFocused = false;
   bool _showScrollToBottom = false;
+  bool _isTextEmpty = true;
 
   ChatMessage? _replyingTo;
   String? _otherUserId;
+  String? _otherUserName;
+  String? _lastVisibleMessagesHash;
 
   @override
   void initState() {
@@ -75,18 +76,29 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       _chatSyncRepository = ChatSyncRepository(roomId: widget.roomId);
       _chatSyncRepository?.start();
     }
+    
+    _messageController.addListener(() {
+      if (mounted) {
+        setState(() {
+          _isTextEmpty = _messageController.text.trim().isEmpty;
+        });
+      }
+    });
+
     _scrollController.addListener(_handleScroll);
+    
     _messageFocusNode.addListener(() {
       if (mounted) {
-        // Close any picker when the keyboard/input gains focus
-        if (_messageFocusNode.hasFocus &&
-            (_showEmojiPicker || _showStickerPicker)) {
-          _showEmojiPicker = false;
-          _showStickerPicker = false;
+        if (_messageFocusNode.hasFocus && (_showEmojiPicker || _showStickerPicker)) {
+          setState(() {
+            _showEmojiPicker = false;
+            _showStickerPicker = false;
+          });
         }
         setState(() => _isInputFocused = _messageFocusNode.hasFocus);
       }
     });
+
     _pendingTimeoutTimer = Timer.periodic(
       const Duration(minutes: 5),
       (_) => unawaited(_markPendingAsFailedAfterTimeout()),
@@ -110,6 +122,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           _otherUserId = room.participants.firstWhere(
             (id) => id != widget.currentUser.id,
             orElse: () => '',
+          );
+          _otherUserName = room.participantNames.firstWhere(
+            (name) => name != widget.currentUser.username,
+            orElse: () => 'الدردشة',
           );
         });
       }
@@ -144,71 +160,104 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   void _scrollToBottom() {
     if (!_scrollController.hasClients) return;
     _scrollController.animateTo(
-      _scrollController.position.maxScrollExtent,
+      0.0,
       duration: const Duration(milliseconds: 280),
       curve: Curves.easeOutCubic,
     );
   }
 
-  Future<void> _markMessagesAsRead(List<ChatMessage> messages) async {
-    final now = DateTime.now();
-    for (final message in messages) {
-      if (message.senderId != widget.currentUser.id &&
-          message.status != MessageStatus.read &&
-          message.status != MessageStatus.seen) {
-        final docId = message.firestoreId;
-        if (docId.isNotEmpty) {
-          FirebaseFirestore.instance
-              .collection('chatRooms')
-              .doc(widget.roomId)
-              .collection('messages')
-              .doc(docId)
-              .update({'status': MessageStatus.seen})
-              .catchError((_) {});
+  void _clearReply() {
+    setState(() {
+      _replyingTo = null;
+    });
+  }
 
-          FirebaseFirestore.instance
-              .collection('chats')
-              .doc(widget.roomId)
-              .collection('messages')
-              .doc(docId)
-              .update({'status': MessageStatus.seen})
-              .catchError((_) {});
+  void _handleEmojiSelected(String emoji) {
+    if (emoji == '\u{0008}') {
+      final text = _messageController.text;
+      if (text.isNotEmpty) {
+        _messageController.text = text.substring(0, text.length - 1);
+      }
+    } else {
+      _messageController.text += emoji;
+    }
+    setState(() => _isTextEmpty = _messageController.text.trim().isEmpty);
+  }
 
-          if (message.isDisappearing &&
-              message.disappearingDurationSeconds > 0 &&
-              message.readAt == DateTime.fromMillisecondsSinceEpoch(0)) {
-            final updatedReadAt = now;
-            final updatedDeleteAt = now.add(
-              Duration(seconds: message.disappearingDurationSeconds),
-            );
+  void _toggleEmojiPicker() {
+    if (_showEmojiPicker) {
+      setState(() => _showEmojiPicker = false);
+      _messageFocusNode.requestFocus();
+    } else {
+      _messageFocusNode.unfocus();
+      setState(() {
+        _showEmojiPicker = true;
+        _showStickerPicker = false;
+      });
+    }
+  }
 
-            await _chatService.updateDisappearingState(
-              roomId: widget.roomId,
-              messageId: docId,
-              isDisappearing: true,
-              disappearingDurationSeconds: message.disappearingDurationSeconds,
-              readAt: updatedReadAt,
-              deleteAt: updatedDeleteAt,
-            );
+  Future<void> _sendTextMessage() async {
+    final text = _messageController.text.trim();
+    if (text.isEmpty) return;
 
-            final isar = await IsarService.init();
-            if (isar != null) {
-              await isar.writeTxn(() async {
-                final existing = await isar.chatMessages
-                    .where()
-                    .firestoreIdEqualTo(docId)
-                    .build()
-                    .findFirst();
+    setState(() => _sending = true);
+    _messageController.clear();
 
-                if (existing != null && existing.roomId == widget.roomId) {
-                  existing.readAt = updatedReadAt;
-                  existing.deleteAt = updatedDeleteAt;
-                  await isar.chatMessages.put(existing);
-                }
-              });
-            }
-          }
-        }
+    final String tempMessageId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+
+    final ChatMessage localMessage = ChatMessage()
+      ..firestoreId = tempMessageId
+      ..roomId = widget.roomId
+      ..senderId = widget.currentUser.id
+      ..senderName = widget.currentUser.username
+      ..receiverId = _otherUserId ?? ''
+      ..text = text
+      ..mediaType = ChatMessageType.text
+      ..status = MessageStatus.pending
+      ..replyToMessageId = _replyingTo?.firestoreId ?? ''
+      ..replyToSenderName = _replyingTo?.senderName ?? ''
+      ..replyToMediaType = _replyingTo?.mediaType ?? ChatMessageType.text
+      ..replyToText = _replyingTo?.text ?? ''
+      ..isDisappearing = _selectedDisappearingDurationSeconds > 0
+      ..disappearingDurationSeconds = _selectedDisappearingDurationSeconds
+      ..timestamp = DateTime.now();
+
+    await _saveLocalMessage(localMessage);
+    
+    if (mounted) {
+      _clearReply();
+      _scrollToBottom();
+    }
+
+    try {
+      final cloudMessageId = await _chatService.sendMessage(
+        roomId: widget.roomId,
+        senderId: widget.currentUser.id,
+        senderName: widget.currentUser.username,
+        receiverId: _otherUserId ?? '',
+        messageId: tempMessageId,
+        text: text,
+        mediaType: ChatMessageType.text,
+        status: MessageStatus.sent,
+        isDisappearing: _selectedDisappearingDurationSeconds > 0,
+        disappearingDurationSeconds: _selectedDisappearingDurationSeconds,
+        replyToMessageId: localMessage.replyToMessageId,
+        replyToSenderName: localMessage.replyToSenderName,
+        replyToMediaType: localMessage.replyToMediaType,
+        replyToText: localMessage.replyToText,
+      );
+      _monitorMessageCommit(cloudMessageId);
+    } catch (error) {
+      await _updateLocalMessageStatus(tempMessageId, MessageStatus.failed);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('فشل إرسال الرسالة')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _sending = false);
       }
     }
   }
@@ -297,7 +346,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         throw Exception('فشل الرفع');
       }
 
-      // Write 'sent' to Firestore; keep local UI pending until commit confirmation.
       final initialStatus = MessageStatus.sent;
 
       final cloudMessageId = await _chatService.sendMessage(
@@ -321,7 +369,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         replyToText: localMessage.replyToText,
       );
 
-      // Monitor commit and update local status when Firestore write is confirmed
       _monitorMessageCommit(cloudMessageId);
     } catch (error) {
       await _updateLocalMessageStatus(tempMessageId, MessageStatus.failed);
@@ -329,12 +376,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('فشل رفع الملف، تأكد من اتصالك')),
       );
-    } finally {
-      // no local upload state remaining
     }
   }
 
-  // --- دوال التقاط الصور والفيديو ---
   Future<void> _pickMedia(ImageSource source, {bool isVideo = false}) async {
     if (source == ImageSource.camera) {
       try {
@@ -548,7 +592,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             message.status == MessageStatus.seen ||
             message.status == MessageStatus.read) continue;
 
-        // Only update if the message is currently 'sent' (i.e., was sent by sender)
         if (message.status == MessageStatus.sent) {
           final batch = FirebaseFirestore.instance.batch();
           final roomRef = FirebaseFirestore.instance
@@ -567,7 +610,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           await _updateLocalMessageStatus(message.firestoreId, MessageStatus.delivered);
         }
       } catch (_) {
-        // ignore individual failures
       }
     }
   }
@@ -648,7 +690,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             ),
             TextButton(
               onPressed: () async {
-                Navigator.pop(context, true);
+                if (!mounted) return;
+                await _audioService.play(path);
               },
               child: const Text('استماع'),
             ),
@@ -702,1089 +745,275 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      useSafeArea: true,
       builder: (context) => Directionality(
         textDirection: TextDirection.rtl,
-        child: SafeArea(
-          child: Align(
-            alignment: Alignment.bottomCenter,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 280),
-              child: Container(
-                margin: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFF8FAFF), Color(0xFFEDE9FE)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(28),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.10),
-                      blurRadius: 24,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 5,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF5B6CFF).withValues(alpha: 0.28),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'إرفاق',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Wrap(
-                      alignment: WrapAlignment.center,
-                      spacing: 16,
-                      runSpacing: 16,
-                      children: [
-                        _buildAttachmentIcon(
-                          Icons.emoji_emotions_rounded,
-                          const Color(0xFFF59E0B),
-                          'إيموجي',
-                          () {
-                            Navigator.pop(context);
-                            _toggleEmojiPicker();
-                          },
-                        ),
-                        _buildAttachmentIcon(
-                          Icons.insert_drive_file_rounded,
-                          const Color(0xFF5B6CFF),
-                          'مستند',
-                          _pickDocument,
-                        ),
-                        _buildAttachmentIcon(
-                          Icons.camera_alt_rounded,
-                          const Color(0xFFEC4899),
-                          'كاميرا',
-                          () => _pickMedia(ImageSource.camera),
-                        ),
-                        _buildAttachmentIcon(
-                          Icons.insert_photo_rounded,
-                          const Color(0xFF8B5CF6),
-                          'المعرض',
-                          () => _pickMedia(ImageSource.gallery),
-                        ),
-                        _buildAttachmentIcon(
-                          Icons.videocam_rounded,
-                          const Color(0xFFF59E0B),
-                          'فيديو',
-                          () => _pickMedia(ImageSource.gallery, isVideo: true),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAttachmentIcon(
-    IconData icon,
-    Color color,
-    String label,
-    VoidCallback onTap,
-  ) {
-    return GestureDetector(
-      onTap: () {
-        Navigator.pop(context);
-        onTap();
-      },
-      child: SizedBox(
-        width: 84,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    color.withValues(alpha: 0.95),
-                    color.withValues(alpha: 0.7),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: color.withValues(alpha: 0.22),
-                    blurRadius: 12,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-              ),
-              child: Icon(icon, color: Colors.white, size: 28),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOtherUserPresenceStatus() {
-    if (_otherUserId == null || _otherUserId!.isEmpty) {
-      return const Text(
-        'آخر ظهور: غير متاح',
-        style: TextStyle(fontSize: 12, color: Colors.white70),
-      );
-    }
-
-    return StreamBuilder<DatabaseEvent>(
-      stream: FirebaseDatabase.instance.ref().child('presence/$_otherUserId').onValue,
-      builder: (context, snapshot) {
-        final data = snapshot.data?.snapshot.value as Map<dynamic, dynamic>? ?? <dynamic, dynamic>{};
-        final settingsProvider = context.watch<SettingsProvider>();
-        final sharePresence = settingsProvider.sharePresence;
-        final online = data['online'] == true;
-        DateTime? lastSeen;
-        final lastSeenValue = data['lastSeen'];
-        if (lastSeenValue is int) {
-          lastSeen = DateTime.fromMillisecondsSinceEpoch(lastSeenValue);
-        }
-
-        final statusText = sharePresence
-            ? (online ? 'متصل الآن' : _formatLastSeen(lastSeen))
-            : 'معلومات التواجد مخفية';
-
-        return Text(
-          statusText,
-          style: TextStyle(
-            fontSize: 12,
-            color: online ? Colors.greenAccent.shade100 : Colors.white70,
-          ),
-        );
-      },
-    );
-  }
-
-  String _formatLastSeen(DateTime? timestamp) {
-    if (timestamp == null) {
-      return 'آخر ظهور: غير متاح';
-    }
-
-    final now = DateTime.now();
-    final timeAgo = timeago.format(timestamp, locale: 'ar', clock: now);
-    return 'آخر ظهور $timeAgo';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      extendBodyBehindAppBar: true,
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(92),
         child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFF5B6CFF), Color(0xFF7C3AED)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-          ),
-          child: AppBar(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            automaticallyImplyLeading: true,
-            titleSpacing: 0,
-            title: Row(
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.forum_rounded,
-                      color: Colors.white,
-                      size: 23,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'دردشة خاصة',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    _buildOtherUserPresenceStatus(),
-                  ],
-                ),
-              ],
-            ),
-            actions: [
-              if (_otherUserId != null && _otherUserId!.isNotEmpty)
-                FutureBuilder<ChatRoom?>(
-                  future: ChatService().getChatRoom(widget.roomId),
-                  builder: (context, snapshot) {
-                    if (!snapshot.hasData || snapshot.data == null) {
-                      return const SizedBox.shrink();
-                    }
-
-                    final room = snapshot.data!;
-                    final otherUserName = room.participantNames.firstWhere(
-                      (name) => name != widget.currentUser.username,
-                      orElse: () => room.participantNames.isNotEmpty
-                          ? room.participantNames.first
-                          : 'مستخدم',
-                    );
-
-                    return Row(
-                      children: [
-                        _buildTopAction(
-                          Icons.call_outlined,
-                          'مكالمة صوتية',
-                          () =>
-                              _startCall(_otherUserId!, otherUserName, 'audio'),
-                        ),
-                        _buildTopAction(
-                          Icons.videocam_outlined,
-                          'مكالمة فيديو',
-                          () =>
-                              _startCall(_otherUserId!, otherUserName, 'video'),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-            ],
-          ),
-        ),
-      ),
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFFF8FAFF), Color(0xFFF3E8FF), Color(0xFFEDE9FE)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            children: [
-              Expanded(
-                child: Stack(
-                  children: [
-                    Positioned.fill(
-                      child: Container(
-                        margin: const EdgeInsets.fromLTRB(12, 10, 12, 0),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              Colors.white.withValues(alpha: 0.92),
-                              Colors.white.withValues(alpha: 0.72),
-                            ],
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                          ),
-                          borderRadius: BorderRadius.circular(32),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.08),
-                              blurRadius: 26,
-                              offset: const Offset(0, 14),
-                            ),
-                          ],
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(32),
-                          child: StreamBuilder<List<ChatMessage>>(
-                            stream: kIsWeb
-                                ? FirebaseFirestore.instance
-                                      .collection('chatRooms')
-                                      .doc(widget.roomId)
-                                      .collection('messages')
-                                      .orderBy('timestamp', descending: false)
-                                      .snapshots()
-                                      .map(
-                                        (snapshot) => snapshot.docs
-                                            .map(
-                                              (doc) =>
-                                                  ChatMessage.fromFirestore(
-                                                    doc,
-                                                    widget.roomId,
-                                                  ),
-                                            )
-                                            .toList(),
-                                      )
-                                : _chatSyncRepository?.watchLocalMessages(),
-                            builder: (context, snapshot) {
-                              if (snapshot.connectionState ==
-                                  ConnectionState.waiting) {
-                                return const Center(
-                                  child: CircularProgressIndicator(),
-                                );
-                              }
-
-                              final messages = snapshot.data ?? [];
-                              if (messages.isEmpty) {
-                                return const Center(
-                                  child: Text(
-                                    'لا توجد رسائل بعد. ابدأ المحادثة!',
-                                  ),
-                                );
-                              }
-
-                              if (mounted) {
-                                WidgetsBinding.instance.addPostFrameCallback((_) async {
-                                  if (!mounted) return;
-                                  // First, mark incoming messages as delivered (device received them).
-                                  await _markMessagesAsDelivered(messages);
-                                  // Then, mark as read/seen when conversation is visible.
-                                  if (!mounted) return;
-                                  await _markMessagesAsRead(messages);
-                                });
-                              }
-
-                              return ListView.builder(
-                                controller: _scrollController,
-                                physics: const BouncingScrollPhysics(),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 16,
-                                  horizontal: 12,
-                                ),
-                                itemCount: messages.length,
-                                itemBuilder: (context, index) {
-                                  final message = messages[index];
-                                  final isMe =
-                                      message.senderId == widget.currentUser.id;
-                                  final showDateSeparator =
-                                      index == 0 ||
-                                      !_isSameDay(
-                                        messages[index - 1].timestamp,
-                                        message.timestamp,
-                                      );
-                                  return Column(
-                                    children: [
-                                      if (showDateSeparator)
-                                        Padding(
-                                          padding: const EdgeInsets.symmetric(
-                                            vertical: 10,
-                                          ),
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 6,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: const Color(
-                                                0xFF5B6CFF,
-                                              ).withValues(alpha: 0.12),
-                                              borderRadius:
-                                                  BorderRadius.circular(999),
-                                            ),
-                                            child: Text(
-                                              _formatDateLabel(
-                                                message.timestamp,
-                                              ),
-                                              style: const TextStyle(
-                                                fontSize: 11,
-                                                color: Color(0xFF5B6CFF),
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      MessageBubble(
-                                        message: message,
-                                        isMine: isMe,
-                                        onReply: _activateReply,
-                                      ),
-                                    ],
-                                  );
-                                },
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      right: 18,
-                      bottom: 18,
-                      child: AnimatedOpacity(
-                        duration: const Duration(milliseconds: 220),
-                        opacity: _showScrollToBottom ? 1 : 0,
-                        child: IgnorePointer(
-                          ignoring: !_showScrollToBottom,
-                          child: Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              onTap: _scrollToBottom,
-                              borderRadius: BorderRadius.circular(999),
-                              child: Container(
-                                width: 50,
-                                height: 50,
-                                decoration: BoxDecoration(
-                                  gradient: const LinearGradient(
-                                    colors: [
-                                      Color(0xFF5B6CFF),
-                                      Color(0xFF8B5CF6),
-                                    ],
-                                  ),
-                                  shape: BoxShape.circle,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.16,
-                                      ),
-                                      blurRadius: 16,
-                                      offset: const Offset(0, 8),
-                                    ),
-                                  ],
-                                ),
-                                child: const Icon(
-                                  Icons.keyboard_arrow_down_rounded,
-                                  color: Colors.white,
-                                  size: 28,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (_showEmojiPicker)
-                      EmojiPicker(onEmojiSelected: (e) => _onEmojiSelected(e)),
-                  ],
-                ),
-              ),
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                  child: Column(
-                    children: [
-                      if (_isRecording)
-                        Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.9),
-                            borderRadius: BorderRadius.circular(16),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.06),
-                                blurRadius: 10,
-                                offset: const Offset(0, 4),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.mic_rounded,
-                                color: Colors.red,
-                                size: 18,
-                              ),
-                              const SizedBox(width: 8),
-                              const Expanded(
-                                child: Text(
-                                  'جاري التسجيل...',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF5B6CFF),
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                onPressed: _stopRecordingAndSend,
-                                icon: const Icon(
-                                  Icons.send_rounded,
-                                  color: Color(0xFF5B6CFF),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      if (_replyingTo != null)
-                        _buildReplyPreview(),
-                      Directionality(
-                        textDirection: TextDirection.rtl,
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 220),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [
-                                Colors.white.withValues(alpha: 0.95),
-                                Colors.white.withValues(alpha: 0.88),
-                              ],
-                            ),
-                            borderRadius: BorderRadius.circular(26),
-                            border: Border.all(
-                              color: _isInputFocused
-                                  ? const Color(
-                                      0xFF5B6CFF,
-                                    ).withValues(alpha: 0.35)
-                                  : Colors.white.withValues(alpha: 0.7),
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.07),
-                                blurRadius: 16,
-                                offset: const Offset(0, 8),
-                              ),
-                            ],
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _messageController,
-                                  focusNode: _messageFocusNode,
-                                  maxLines: 5,
-                                  minLines: 1,
-                                  onChanged: (text) => setState(
-                                    () => _isTyping = text.trim().isNotEmpty,
-                                  ),
-                                  onSubmitted: (_) {
-                                    if (!_isRecording) {
-                                      _sendText();
-                                    }
-                                  },
-                                  style: const TextStyle(fontSize: 15),
-                                  decoration: InputDecoration(
-                                    hintText: _isRecording
-                                        ? 'جاري التسجيل...'
-                                        : 'مراسلة...',
-                                    hintStyle: TextStyle(
-                                      color: _isRecording
-                                          ? Colors.red
-                                          : Colors.grey.shade600,
-                                    ),
-                                    border: InputBorder.none,
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      vertical: 10,
-                                      horizontal: 4,
-                                    ),
-                                    prefixIcon: Padding(
-                                      padding: const EdgeInsets.only(right: 4),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          _buildDisappearingDurationPicker(),
-                                          _buildComposerIcon(
-                                            Icons.emoji_emotions_outlined,
-                                            _toggleEmojiPicker,
-                                            isPrimary: false,
-                                          ),
-                                          _buildComposerIcon(
-                                            Icons.sticky_note_2_outlined,
-                                            _openStickerBottomSheet,
-                                            isPrimary: false,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                              _buildComposerIcon(
-                                Icons.attach_file_rounded,
-                                _showAttachmentBottomSheet,
-                                isPrimary: false,
-                              ),
-                              const SizedBox(width: 4),
-                              _buildDynamicSendButton(),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopAction(
-    IconData icon,
-    String tooltip,
-    VoidCallback onPressed,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 2),
-      child: IconButton(
-        tooltip: tooltip,
-        icon: Container(
-          width: 38,
-          height: 38,
+          margin: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.16),
-            borderRadius: BorderRadius.circular(14),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
           ),
-          child: Icon(icon, color: Colors.white, size: 20),
+          child: Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 24,
+            runSpacing: 24,
+            children: [
+              _buildAttachmentIcon(Icons.insert_drive_file_rounded, const Color(0xFF5B6CFF), 'مستند', _pickDocument),
+              _buildAttachmentIcon(Icons.camera_alt_rounded, const Color(0xFF10B981), 'كاميرا', () {
+                Navigator.pop(context);
+                _pickMedia(ImageSource.camera, isVideo: false);
+              }),
+              _buildAttachmentIcon(Icons.image, const Color(0xFFF59E0B), 'المعرض', () {
+                Navigator.pop(context);
+                _pickMediaFromGallery(isVideo: false);
+              }),
+              _buildAttachmentIcon(Icons.videocam, const Color(0xFFE94057), 'فيديو', () {
+                Navigator.pop(context);
+                _pickMediaFromGallery(isVideo: true);
+              }),
+            ],
+          ),
         ),
-        onPressed: onPressed,
       ),
     );
   }
 
-  Widget _buildDisappearingDurationPicker() {
-    const options = <MapEntry<int, String>>[
-      MapEntry(0, 'بدون اختفاء'),
-      MapEntry(30, '30 ثانية'),
-      MapEntry(60, '1 دقيقة'),
-      MapEntry(300, '5 دقائق'),
-      MapEntry(3600, '1 ساعة'),
-      MapEntry(86400, '24 ساعة'),
-      MapEntry(604800, '1 أسبوع'),
-      MapEntry(2592000, '1 شهر'),
-      MapEntry(31536000, '1 سنة'),
-    ];
-
-    return PopupMenuButton<int>(
-      tooltip: 'إعداد اختفاء الرسالة',
-      icon: Icon(
-        Icons.timer_outlined,
-        color: _selectedDisappearingDurationSeconds > 0
-            ? const Color(0xFF5B6CFF)
-            : Colors.grey.shade700,
-        size: 20,
-      ),
-      onSelected: (value) {
-        if (mounted) {
-          setState(() => _selectedDisappearingDurationSeconds = value);
-        }
-      },
-      itemBuilder: (context) => options
-          .map(
-            (option) => PopupMenuItem<int>(
-              value: option.key,
-              child: Text(option.value),
-            ),
-          )
-          .toList(),
-    );
-  }
-
-  Widget _buildDynamicSendButton() {
-    final shouldShowSend = !_isRecording && _isTyping && !_sending;
-    final buttonIcon = shouldShowSend ? Icons.send_rounded : Icons.mic_rounded;
-
+  Widget _buildAttachmentIcon(IconData icon, Color color, String label, VoidCallback onTap) {
     return GestureDetector(
-      onLongPress: shouldShowSend ? null : _startRecording,
-      onLongPressUp: shouldShowSend ? null : _stopRecordingAndSend,
-      onTap: shouldShowSend ? _sendText : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: _isRecording
-                ? [Colors.red, Colors.redAccent]
-                : const [Color(0xFF5B6CFF), Color(0xFF8B5CF6)],
-          ),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.14),
-              blurRadius: 10,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: _sending
-            ? const Padding(
-                padding: EdgeInsets.all(12),
-                child: CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 2.2,
-                ),
-              )
-            : Icon(buttonIcon, color: Colors.white, size: 24),
-      ),
-    );
-  }
-
-  Widget _buildComposerIcon(
-    IconData icon,
-    VoidCallback? onPressed, {
-    required bool isPrimary,
-  }) {
-    final bool isDisabled = onPressed == null;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 3),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onPressed,
-          borderRadius: BorderRadius.circular(14),
-          child: Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: isPrimary
-                  ? (isDisabled
-                        ? Colors.grey.shade400
-                        : const Color(0xFF5B6CFF))
-                  : Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              icon,
-              size: 22,
-              color: isPrimary
-                  ? (isDisabled ? Colors.white70 : Colors.white)
-                  : const Color(0xFF5B6CFF),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  bool _isSameDay(DateTime first, DateTime second) {
-    return first.year == second.year &&
-        first.month == second.month &&
-        first.day == second.day;
-  }
-
-  void _toggleEmojiPicker() {
-    if (!mounted) return;
-    setState(() {
-      _showEmojiPicker = !_showEmojiPicker;
-      if (_showEmojiPicker) {
-        _showStickerPicker = false;
-        _messageFocusNode.unfocus();
-      } else {
-        // show keyboard again
-        FocusScope.of(context).requestFocus(_messageFocusNode);
-      }
-    });
-  }
-
-  void _openStickerBottomSheet() {
-    if (!mounted) return;
-    _messageFocusNode.unfocus();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (context) {
-        return SizedBox(
-          height: MediaQuery.of(context).size.height * 0.65,
-          child: StickerPicker(
-            onStickerSelected: (url) {
-              Navigator.pop(context);
-              _sendSticker(url);
-            },
-          ),
-        );
-      },
-    );
-  }
-
-  void _onEmojiSelected(String emoji) {
-    final text = _messageController.text;
-    final sel = _messageController.selection;
-    final base = sel.start.clamp(0, text.length);
-
-    // map code unit offset to grapheme cluster index
-    int clusterIndexForOffset(int offset) {
-      final chars = text.characters;
-      int acc = 0;
-      int idx = 0;
-      for (final ch in chars) {
-        acc += ch.length;
-        if (acc > offset) break;
-        idx++;
-      }
-      return idx;
-    }
-
-    final chars = text.characters;
-    final beforeCount = clusterIndexForOffset(base);
-    final beforeClusters = chars.take(beforeCount).toString();
-    final afterClusters = chars.skip(beforeCount).toString();
-
-    if (emoji == '\u{0008}') {
-      // backspace: remove previous grapheme cluster
-      if (beforeCount == 0) return;
-      final newBefore = chars.take(beforeCount - 1).toString();
-      final newText = newBefore + afterClusters;
-      _messageController.text = newText;
-      _messageController.selection = TextSelection.collapsed(
-        offset: newBefore.length,
-      );
-      setState(() => _isTyping = newText.trim().isNotEmpty);
-      return;
-    }
-
-    final newText = beforeClusters + emoji + afterClusters;
-    _messageController.text = newText;
-    final newCursor = (beforeClusters + emoji).length;
-    _messageController.selection = TextSelection.collapsed(offset: newCursor);
-    setState(() => _isTyping = newText.trim().isNotEmpty);
-  }
-
-  String _formatDateLabel(DateTime timestamp) {
-    final now = DateTime.now();
-    if (_isSameDay(timestamp, now)) return 'اليوم';
-    final yesterday = now.subtract(const Duration(days: 1));
-    if (_isSameDay(timestamp, yesterday)) return 'أمس';
-    return '${timestamp.day}/${timestamp.month}/${timestamp.year}';
-  }
-
-  Future<void> _sendText() async {
-    final text = _messageController.text.trim();
-    if (text.isEmpty) return;
-
-    final localMessageId = 'local_${DateTime.now().microsecondsSinceEpoch}';
-    final localMessage = ChatMessage()
-      ..firestoreId = localMessageId
-      ..roomId = widget.roomId
-      ..senderId = widget.currentUser.id
-      ..senderName = widget.currentUser.username
-      ..receiverId = _otherUserId ?? ''
-      ..text = text
-      ..mediaType = ChatMessageType.text
-      ..status = MessageStatus.pending
-      ..replyToMessageId = _replyingTo?.firestoreId ?? ''
-      ..replyToSenderName = _replyingTo?.senderName ?? ''
-      ..replyToMediaType = _replyingTo?.mediaType ?? ChatMessageType.text
-      ..replyToText = _replyingTo?.text ?? ''
-      ..isDisappearing = _selectedDisappearingDurationSeconds > 0
-      ..disappearingDurationSeconds = _selectedDisappearingDurationSeconds
-      ..timestamp = DateTime.now();
-
-    await _saveLocalMessage(localMessage);
-
-    if (mounted) {
-      _messageController.clear();
-      _clearReply();
-      setState(() => _isTyping = false);
-    }
-
-    unawaited(
-      _pushTextToCloudInBackground(localMessageId, localMessage),
-    );
-  }
-
-  Future<void> _pushTextToCloudInBackground(
-    String localMessageId,
-    ChatMessage localMessage,
-  ) async {
-    try {
-      // Always keep local message as PENDING until the Firestore write is committed to server.
-      // Firestore local persistence will accept the write locally and report `hasPendingWrites` metadata.
-      // We write status=sent to Firestore so recipients don't see a local-only pending state,
-      // but we keep sender UI as pending until commit confirmation.
-      final initialStatus = MessageStatus.sent;
-
-      final cloudMessageId = await _chatService.sendMessage(
-        roomId: widget.roomId,
-        senderId: widget.currentUser.id,
-        senderName: widget.currentUser.username,
-        receiverId: _otherUserId ?? '',
-        messageId: localMessageId,
-        text: localMessage.text,
-        status: initialStatus,
-        isDisappearing: localMessage.isDisappearing,
-        disappearingDurationSeconds: localMessage.disappearingDurationSeconds,
-        replyToMessageId: localMessage.replyToMessageId,
-        replyToSenderName: localMessage.replyToSenderName,
-        replyToMediaType: localMessage.replyToMediaType,
-        replyToText: localMessage.replyToText,
-      );
-      // Monitor commit state: only promote local UI from PENDING -> SENT when Firestore confirms commit.
-      _monitorMessageCommit(cloudMessageId);
-      if (!mounted) return;
-    } catch (_) {
-      await _updateLocalMessageStatus(localMessageId, MessageStatus.failed);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('فشل إرسال الرسالة')),
-      );
-    }
-  }
-
-  Future<void> _sendSticker(String sticker) async {
-    if (sticker.isEmpty) return;
-    if (mounted) {
-      setState(() {
-        _sending = true;
-        _showStickerPicker = false;
-      });
-    }
-
-    try {
-      final initialStatus = MessageStatus.sent;
-      final cloudMessageId = await _chatService.sendMessage(
-        roomId: widget.roomId,
-        senderId: widget.currentUser.id,
-        senderName: widget.currentUser.username,
-        receiverId: _otherUserId ?? '',
-        text: sticker,
-        status: initialStatus,
-        replyToMessageId: _replyingTo?.firestoreId ?? '',
-        replyToSenderName: _replyingTo?.senderName ?? '',
-        replyToMediaType: _replyingTo?.mediaType ?? ChatMessageType.text,
-        replyToText: _replyingTo?.text ?? '',
-      );
-      _monitorMessageCommit(cloudMessageId);
-    } catch (_) {
-      if (mounted && context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('فشل إرسال الملصق')));
-      }
-    } finally {
-      if (mounted) {
-        _clearReply();
-        setState(() {
-          _sending = false;
-          _isTyping = false;
-        });
-      }
-    }
-  }
-
-  Widget _buildReplyPreview() {
-    final replied = _replyingTo!;
-    final previewText = replied.mediaType == ChatMessageType.text
-        ? replied.text
-        : replied.mediaType == ChatMessageType.image
-            ? 'صورة'
-            : replied.mediaType == ChatMessageType.video
-                ? 'فيديو'
-                : replied.mediaType == ChatMessageType.audio
-                    ? 'مقطع صوتي'
-                    : replied.mediaType == 'file'
-                        ? 'ملف'
-                        : replied.mediaType == ChatMessageType.call
-                            ? 'مكالمة'
-                            : 'رسالة';
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.94),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.grey.withOpacity(0.25)),
-      ),
-      child: Row(
+      onTap: onTap,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'الرد على ${replied.senderName}',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF5B6CFF),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  previewText,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.black87.withOpacity(0.85),
-                  ),
-                ),
-              ],
-            ),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(color: color.withOpacity(0.1), shape: BoxShape.circle),
+            child: Icon(icon, color: color, size: 28),
           ),
-          IconButton(
-            icon: const Icon(Icons.close, size: 22, color: Colors.grey),
-            onPressed: _clearReply,
-          ),
+          const SizedBox(height: 8),
+          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black87)),
         ],
       ),
     );
   }
 
-  void _activateReply(ChatMessage message) {
-    if (!mounted) return;
-    setState(() {
-      _replyingTo = message;
-      _messageFocusNode.requestFocus();
-    });
-  }
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF5F6FA),
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          elevation: 1,
+          iconTheme: const IconThemeData(color: Colors.black87),
+          title: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: const Color(0xFF5B6CFF).withOpacity(0.2),
+                child: const Icon(Icons.person, color: Color(0xFF5B6CFF)),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                _otherUserName ?? 'الدردشة',
+                style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ],
+          ),
+        ),
+        body: SafeArea(
+          child: Column(
+            children: [
+              Expanded(
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('chatRooms')
+                      .doc(widget.roomId)
+                      .collection('messages')
+                      .orderBy('timestamp', descending: true)
+                      .snapshots(),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          'لا توجد رسائل بعد.. كن أول من يبدأ المحادثة 👋',
+                          style: TextStyle(color: Colors.grey, fontSize: 15),
+                        ),
+                      );
+                    }
 
-  void _clearReply() {
-    if (!mounted) return;
-    setState(() {
-      _replyingTo = null;
-    });
-  }
+                    final docs = snapshot.data!.docs;
 
-  Future<void> _startCall(
-    String otherUserId,
-    String otherUserName,
-    String type,
-  ) async {
-    try {
-      final session = await CallService.instance.initiateCall(
-        chatId: widget.roomId,
-        callerId: widget.currentUser.id,
-        callerName: widget.currentUser.username,
-        receiverId: otherUserId,
-        receiverName: otherUserName,
-        type: type,
-      );
-      if (!mounted) return;
-      await Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => CallScreen(session: session)));
-    } catch (_) {}
+                    return ListView.builder(
+                      controller: _scrollController,
+                      reverse: true,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
+                      itemCount: docs.length,
+                      itemBuilder: (context, index) {
+                        final data = docs[index].data() as Map<String, dynamic>;
+                        
+                        final message = ChatMessage()
+                          ..firestoreId = docs[index].id
+                          ..roomId = data['roomId'] ?? ''
+                          ..senderId = data['senderId'] ?? ''
+                          ..senderName = data['senderName'] ?? ''
+                          ..text = data['text'] ?? ''
+                          ..mediaType = data['mediaType'] ?? 'text'
+                          ..mediaUrl = data['mediaUrl'] ?? ''
+                          ..status = data['status'] ?? 'sent'
+                          ..timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now()
+                          ..replyToMessageId = data['replyToMessageId'] ?? ''
+                          ..replyToSenderName = data['replyToSenderName'] ?? ''
+                          ..replyToMediaType = data['replyToMediaType'] ?? 'text'
+                          ..replyToText = data['replyToText'] ?? '';
+
+                        final isMine = message.senderId == widget.currentUser.id;
+
+                        return MessageBubble(
+                          message: message,
+                          isMine: isMine,
+                          onReply: (msg) {
+                            setState(() => _replyingTo = msg);
+                            _messageFocusNode.requestFocus();
+                          },
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+
+              if (_replyingTo != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    border: const Border(left: BorderSide(color: Color(0xFF5B6CFF), width: 4)),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'الرد على ${_replyingTo!.senderName}',
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF5B6CFF), fontSize: 13),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              _replyingTo!.text.isNotEmpty ? _replyingTo!.text : 'مرفق',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.black54, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 20, color: Colors.black54),
+                        onPressed: _clearReply,
+                      ),
+                    ],
+                  ),
+                ),
+
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: [
+                    BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -2)),
+                  ],
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(24),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            IconButton(
+                              icon: Icon(
+                                _showEmojiPicker ? Icons.keyboard : Icons.emoji_emotions_outlined,
+                                color: Colors.grey[600],
+                              ),
+                              onPressed: _toggleEmojiPicker,
+                            ),
+                            Expanded(
+                              child: TextField(
+                                controller: _messageController,
+                                focusNode: _messageFocusNode,
+                                maxLines: 5,
+                                minLines: 1,
+                                decoration: InputDecoration(
+                                  hintText: _isRecording ? 'جاري التسجيل...' : 'اكتب رسالة...',
+                                  border: InputBorder.none,
+                                  contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                                readOnly: _isRecording,
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.attach_file, color: Colors.grey),
+                              onPressed: _showAttachmentBottomSheet,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () {
+                        if (!_isTextEmpty) {
+                          _sendTextMessage();
+                        } else {
+                          if (_isRecording) {
+                            _stopRecordingAndSend();
+                          } else {
+                            _startRecording();
+                          }
+                        }
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        margin: const EdgeInsets.only(bottom: 2),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: _isTextEmpty
+                              ? (_isRecording ? Colors.red : const Color(0xFF2EC7A5))
+                              : const Color(0xFF5B6CFF),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          _isTextEmpty
+                              ? (_isRecording ? Icons.stop_rounded : Icons.mic_rounded)
+                              : Icons.send_rounded,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              if (_showEmojiPicker)
+                EmojiPicker(
+                  onEmojiSelected: _handleEmojiSelected,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

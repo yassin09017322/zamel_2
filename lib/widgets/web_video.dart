@@ -1,5 +1,6 @@
 // Web implementation using dart:html and platform view registry
-import 'dart:ui' as ui;
+import 'dart:ui_web' as ui;
+
 // ignore: avoid_web_libraries_in_flutter
 import 'dart:html' as html;
 

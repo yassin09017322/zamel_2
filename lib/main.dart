@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart' as firestore;
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:firebase_core/firebase_core.dart' as firebase_core;
+import 'package:firebase_messaging/firebase_messaging.dart'; // تم الإضافة للإشعارات
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -25,6 +26,30 @@ import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'services/local_storage_service.dart';
+import 'services/callkit_service.dart'; // تم الإضافة لاستدعاء شاشة الاتصال
+
+// تم الإضافة: هذه الدالة تعمل في الخلفية وتستقبل المكالمة والتطبيق مغلق
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await firebase_core.Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  // التحقق مما إذا كان الإشعار القادم هو مكالمة
+  if (message.data['type'] == 'call') {
+    final callId = message.data['callId'] ?? '';
+    final callerName = message.data['callerName'] ?? 'مكالمة واردة';
+    final callType = message.data['callType'] ?? 'audio'; // 'video' أو 'audio'
+
+    if (callId.isNotEmpty) {
+      await CallKitService.instance.showIncomingCall(
+        callId: callId,
+        callerName: callerName,
+        type: callType,
+      );
+    }
+  }
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,6 +60,16 @@ Future<void> main() async {
     await firebase_core.Firebase.initializeApp(
       options: DefaultFirebaseOptions.currentPlatform,
     );
+
+    // تم الإضافة: طلب صلاحية الإشعارات للمستخدم وتفعيل الاستماع في الخلفية
+    if (!kIsWeb) {
+      await FirebaseMessaging.instance.requestPermission(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
+      FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    }
   } catch (error, stackTrace) {
     debugPrint('Firebase initialization failed: $error');
     debugPrint(stackTrace.toString());

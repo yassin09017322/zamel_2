@@ -26,6 +26,7 @@ class _CallScreenState extends State<CallScreen> {
   late RTCVideoRenderer _localRenderer;
   late RTCVideoRenderer _remoteRenderer;
   Timer? _durationTimer;
+  Timer? _offlineRingTimer; // مؤقت للرنين المتقطع
   StreamSubscription<MediaStream?>? _remoteStreamSubscription;
   StreamSubscription<String>? _statusSubscription;
 
@@ -52,17 +53,19 @@ class _CallScreenState extends State<CallScreen> {
     _statusSubscription = widget.session.statusStream.listen((status) {
       if (!mounted) return;
       final normalized = status.toLowerCase();
-      if (normalized == 'connected') {
+      
+      // تم التعديل: إيقاف الرنين عند الرد (accepted) أو الاتصال الفعلي (connected)
+      if (normalized == 'connected' || normalized == 'accepted') {
         _stopRingtone();
         setState(() {
           _connectionStatus = 'متصل';
         });
-      } else if (normalized == 'calling' || normalized == 'ringing' || normalized == 'accepted') {
+      } else if (normalized == 'calling' || normalized == 'ringing') {
         _playRingtone();
         setState(() {
           _connectionStatus = 'جارٍ الاتصال...';
         });
-      } else if (normalized == 'ended' || normalized == 'rejected' || normalized == 'canceled') {
+      } else if (normalized == 'ended' || normalized == 'rejected' || normalized == 'canceled' || normalized == 'missed') {
         _stopRingtone();
         setState(() {
           _connectionStatus = 'تم إنهاء المكالمة';
@@ -77,19 +80,41 @@ class _CallScreenState extends State<CallScreen> {
   void _playRingtone() {
     if (!_isRinging) {
       _isRinging = true;
-      // تشغيل نغمة تنبيه النظام بشكل متكرر (طوووط ... طوووط)
-      FlutterRingtonePlayer().play(
-        android: AndroidSounds.notification,
-        ios: IosSounds.glass,
-        looping: true,
-        volume: 0.3,
-      );
+      
+      if (widget.session.isReceiverOnline) {
+        // الطرف الآخر متصل: رنين متصل (عادي)
+        FlutterRingtonePlayer().play(
+          android: AndroidSounds.ringtone, // نغمة رنين
+          ios: IosSounds.electronic,
+          looping: true,
+          volume: 0.5,
+        );
+      } else {
+        // الطرف الآخر غير متصل: رنين متقطع (محاكاة انقطاع الشبكة)
+        _playOfflineBeep();
+        _offlineRingTimer = Timer.periodic(const Duration(seconds: 4), (timer) {
+          if (_isRinging) {
+            _playOfflineBeep();
+          } else {
+            timer.cancel();
+          }
+        });
+      }
     }
+  }
+
+  void _playOfflineBeep() {
+    FlutterRingtonePlayer().play(
+      android: AndroidSounds.notification, // نغمة قصيرة للرنين المتقطع
+      ios: IosSounds.glass,
+      volume: 0.3,
+    );
   }
 
   void _stopRingtone() {
     if (_isRinging) {
       _isRinging = false;
+      _offlineRingTimer?.cancel();
       FlutterRingtonePlayer().stop();
     }
   }
