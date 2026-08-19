@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:io' as io; // ✅ تم إضافة مكتبة الملفات الحقيقية هنا
 
 import 'package:zamel_appp/src/platform_file.dart';
 import 'package:flutter/material.dart';
@@ -138,7 +139,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     } catch (_) {}
   }
 
-  // ✅ NEW: Retry method for failed uploads
   Future<void> retryUpload(ChatMessage failedMessage) async {
     if (failedMessage.mediaUrl.isEmpty || failedMessage.status != MessageStatus.failed) {
       if (mounted) {
@@ -150,7 +150,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     }
 
     try {
-      // ✅ Reset upload state
       await _updateLocalMessageStatus(
         failedMessage.firestoreId,
         MessageStatus.pending,
@@ -164,13 +163,13 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       bool isVideo = failedMessage.mediaType == ChatMessageType.video;
       String downloadUrl = '';
 
-      // ✅ Retry upload
       if (kIsWeb) {
-        // For web, we cannot retry from stored bytes, so show error
         throw Exception('لا يمكن إعادة محاولة الرفع من المتصفح. حاول تحديث الصفحة وأرسل الملف مرة أخرى.');
       } else {
+        // ✅ استخدام النوع الديناميكي لملف io.File الحقيقي
+        dynamic localRealFile = io.File(failedMessage.mediaUrl);
         downloadUrl = await _mediaService.uploadFileWithProgress(
-          File(failedMessage.mediaUrl), // Note: this might not work if path changed
+          localRealFile, 
           isVideo: isVideo,
           explicitFileName: fileName,
           onProgress: (progress) {
@@ -181,7 +180,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
       if (downloadUrl.isEmpty) throw Exception('فشل الرفع عبر المحرك');
 
-      // ✅ Update message with successful upload
       await _updateLocalMessageStatus(
         failedMessage.firestoreId,
         MessageStatus.sent,
@@ -405,8 +403,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     }
   }
 
+  // ✅ استخدام dynamic بدل File لتفادي أخطاء الويب
   Future<void> _uploadAndSendMedia(
-    File? file,
+    dynamic file,
     String mediaType,
     String textPlaceholder, {
     Uint8List? webBytes,
@@ -416,6 +415,13 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     int? fileSize,
   }) async {
     final String tempMessageId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+    
+    String getFileName() {
+      if (webFileName != null) return webFileName;
+      if (file != null) return file.path.split('/').last;
+      return '';
+    }
+
     final ChatMessage localMessage = ChatMessage()
       ..firestoreId = tempMessageId
       ..roomId = widget.roomId
@@ -424,9 +430,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       ..receiverId = _otherUserId ?? ''
       ..text = textPlaceholder
       ..mediaType = mediaType
-      ..fileName = webFileName ?? (file?.path.split('/').last ?? '')
+      ..fileName = getFileName()
       ..fileType = fileType ?? ''
-..fileSize = fileSize ?? (file != null ? await (file as dynamic).length() : 0)
+      ..fileSize = fileSize ?? (file != null ? await file.length() : 0)
       ..status = MessageStatus.pending
       ..uploadProgress = 0.0
       ..uploadStartedAt = DateTime.now()
@@ -448,12 +454,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     }
 
     try {
-      final fileName = webFileName ?? '${DateTime.now().millisecondsSinceEpoch}_${file?.path.split('/').last ?? 'media_file'}';
+      final fileName = getFileName().isEmpty ? '${DateTime.now().millisecondsSinceEpoch}_media_file' : getFileName();
       String downloadUrl = '';
       
       bool isVideo = (mediaType == ChatMessageType.video);
       
-      // ✅ Enhanced upload with progress tracking
       if (kIsWeb && webBytes != null) {
         downloadUrl = await _mediaService.uploadBytes(
           webBytes, 
@@ -462,7 +467,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         );
       } else if (file != null) {
         downloadUrl = await _mediaService.uploadFileWithProgress(
-          file,
+          file, // سيتم تمرير ملف حقيقي هنا بنجاح
           isVideo: isVideo,
           explicitFileName: fileName,
           onProgress: (progress) {
@@ -475,12 +480,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
       if (downloadUrl.isEmpty) throw Exception('فشل الرفع عبر المحرك');
 
-      // ✅ Determine actual media type from file extension if not specified
       String actualMediaType = mediaType;
       String actualFileType = fileType ?? '';
       
       if (mediaType == ChatMessageType.file) {
-        // For documents/files, try to detect more specific type
         final lowerFileName = fileName.toLowerCase();
         if (lowerFileName.endsWith('.pdf')) {
           actualFileType = 'pdf';
@@ -516,7 +519,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         replyToText: localMessage.replyToText,
       );
 
-      // ✅ Update local message with completed upload
       await _updateLocalMessageStatus(
         tempMessageId,
         MessageStatus.sent,
@@ -536,7 +538,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           tempMessageId,
           MessageStatus.failed,
         );
-        // ✅ Store error reason for display
         await _updateLocalMessageError(tempMessageId, error.toString());
       } catch (_) {}
     }
@@ -567,8 +568,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           webFileName: file.name,
         );
       } else {
+        // ✅ استخدام النوع الديناميكي
+        dynamic localRealFile = io.File(file.path);
         await _uploadAndSendMedia(
-          File(file.path),
+          localRealFile,
           isVideo ? ChatMessageType.video : ChatMessageType.image,
           isVideo ? '🎥 فيديو' : '📷 صورة',
         );
@@ -613,8 +616,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             fileSize: pickedFile.size,
           );
         } else if (pickedFile.path != null) {
+          // ✅ استخدام النوع الديناميكي
+          dynamic localRealFile = io.File(pickedFile.path!);
           await _uploadAndSendMedia(
-            File(pickedFile.path!),
+            localRealFile,
             mediaType,
             textPlaceholder,
             fileType: fileType,
@@ -660,8 +665,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             fileSize: pickedFile.size,
           );
         } else if (pickedFile.path != null) {
+          // ✅ استخدام النوع الديناميكي
+          dynamic localRealFile = io.File(pickedFile.path!);
           await _uploadAndSendMedia(
-            File(pickedFile.path!),
+            localRealFile,
             ChatMessageType.file,
             '📄 ملف مستند',
             fileType: pickedFile.extension,
@@ -724,7 +731,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       if (mediaUrl != null && mediaUrl.isNotEmpty) {
         existing.mediaUrl = mediaUrl;
       }
-      // ✅ Clear upload progress when done
       if (status == MessageStatus.sent || status == MessageStatus.failed) {
         existing.uploadProgress = status == MessageStatus.sent ? 1.0 : 0.0;
       }
@@ -732,7 +738,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     });
   }
 
-  // ✅ New method to update upload progress
   Future<void> _updateUploadProgress(String firestoreId, double progress) async {
     final isar = await IsarService.init();
     if (isar == null) return;
@@ -750,14 +755,12 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         await isar.chatMessages.put(existing);
       });
       
-      // ✅ Trigger UI update
       if (mounted) {
         setState(() {});
       }
     } catch (_) {}
   }
 
-  // ✅ New method to store upload error reason
   Future<void> _updateLocalMessageError(String firestoreId, String errorReason) async {
     final isar = await IsarService.init();
     if (isar == null) return;
@@ -775,7 +778,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         await isar.chatMessages.put(existing);
       });
       
-      // ✅ Trigger UI update
       if (mounted) {
         setState(() {});
       }
@@ -784,7 +786,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
   Future<void> _monitorMessageCommit(String firestoreId) async {
     try {
-      // ✅ Updated to use /chatRooms (consolidated from /chats)
       final docRef = FirebaseFirestore.instance
           .collection('chatRooms')
           .doc(widget.roomId)
@@ -814,7 +815,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             message.status == MessageStatus.read) continue;
 
         if (message.status == MessageStatus.sent) {
-          // ✅ Consolidated: Update only /chatRooms (removed /chats)
           await FirebaseFirestore.instance
               .collection('chatRooms')
               .doc(widget.roomId)
@@ -945,8 +945,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           );
         }
       } else {
+        // ✅ استخدام النوع الديناميكي
+        dynamic localRealFile = io.File(path);
         await _uploadAndSendMedia(
-          File(path),
+          localRealFile,
           ChatMessageType.audio,
           '🎤 مقطع صوتي',
         );
@@ -1003,7 +1005,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Column(
-        mainAxisSize: MainAxisSize.min, // إصلاح للشاشة الرمادية هنا
+        mainAxisSize: MainAxisSize.min,
         children: [
           Container(
             padding: const EdgeInsets.all(18),
@@ -1020,7 +1022,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     );
   }
 
-  // 🔥 إضافة ودجت شريط التثبيت (البانر)
   Widget _buildPinnedBanner(Map<String, dynamic> data) {
     String text = data['text'] ?? '';
     String mediaType = data['mediaType'] ?? 'text';
@@ -1058,9 +1059,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
+                const Text(
                   'رسالة مثبتة',
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Color(0xFF5B6CFF),
                     fontWeight: FontWeight.bold,
                     fontSize: 13,
@@ -1108,7 +1109,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
-                    mainAxisSize: MainAxisSize.min, // إصلاح للشاشة الرمادية هنا
+                    mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -1194,7 +1195,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             children: [
               Expanded(
                 child: StreamBuilder<QuerySnapshot>(
-                  // ✅ Consolidated: Fetch from /chatRooms (removed /chats)
                   stream: FirebaseFirestore.instance
                       .collection('chatRooms')
                       .doc(widget.roomId)
@@ -1220,7 +1220,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                     if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                       return Center(
                         child: Column(
-                          mainAxisSize: MainAxisSize.min, // إصلاح للشاشة الرمادية هنا
+                          mainAxisSize: MainAxisSize.min,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Container(
@@ -1247,8 +1247,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                     }
 
                     final docs = snapshot.data!.docs;
-
-                    // 🔥 استخراج الرسائل المثبتة
                     final pinnedDocs = docs.where((d) {
                       final data = d.data() as Map<String, dynamic>;
                       return data['isPinned'] == true;
@@ -1256,7 +1254,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
                     return Column(
                       children: [
-                        // 🔥 عرض الرسالة المثبتة في أعلى الشاشة زي واتساب
                         if (pinnedDocs.isNotEmpty)
                           _buildPinnedBanner(pinnedDocs.first.data() as Map<String, dynamic>),
                           
@@ -1283,7 +1280,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                                 ..replyToSenderName = data['replyToSenderName'] ?? ''
                                 ..replyToMediaType = data['replyToMediaType'] ?? 'text'
                                 ..replyToText = data['replyToText'] ?? ''
-                                ..isPinned = data['isPinned'] ?? false; // 🔥 التعديل هنا: ربط حالة التثبيت عشان MessageBubble يقرأها
+                                ..isPinned = data['isPinned'] ?? false;
 
                               final isMine = message.senderId == widget.currentUser.id;
 
@@ -1294,7 +1291,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                                   setState(() => _replyingTo = msg);
                                   _messageFocusNode.requestFocus();
                                 },
-                                // ✅ NEW: Add retry callback
                                 onRetry: isMine && message.status == MessageStatus.failed
                                   ? (msg) => retryUpload(msg)
                                   : null,
@@ -1324,7 +1320,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                     children: [
                       Expanded(
                         child: Column(
-                          mainAxisSize: MainAxisSize.min, // إصلاح إضافي للأمان
+                          mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
