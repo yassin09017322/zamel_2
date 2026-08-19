@@ -1,4 +1,5 @@
 import 'package:zamel_appp/src/platform_file.dart';
+import 'dart:io' as io;
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:easy_localization/easy_localization.dart' hide TextDirection;
@@ -16,7 +17,7 @@ import '../services/media_service.dart'; // تم إضافة محرك الرفع 
 class _SelectedPostMedia {
   final String mediaType;
   final String fileName;
-  final File? file;
+  final dynamic file; // تم استخدام dynamic لتسهيل الـ Type Casting
   final Uint8List? bytes;
 
   const _SelectedPostMedia({
@@ -197,12 +198,10 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     }
   }
 
-  // 1. إغلاق الكيبورد (تحسين UX احترافي)
   void _dismissKeyboard() {
     FocusScope.of(context).unfocus();
   }
 
-  // 2. دالة فتح المعرض
   Future<void> _pickMedia() async {
     _dismissKeyboard();
     try {
@@ -232,10 +231,15 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
             bytes: await pickedFile.readAsBytes(),
           ));
         } else {
+          // Dynamic Casting لملف dart:io الحقيقي
+          dynamic localRealFile;
+          if (!kIsWeb) {
+            localRealFile = io.File(pickedFile.path); 
+          }
           selectedMedia.add(_SelectedPostMedia(
             mediaType: isVideo ? 'video' : 'image',
             fileName: pickedFile.name,
-            file: File(pickedFile.path),
+            file: localRealFile,
           ));
         }
       }
@@ -258,7 +262,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     }
   }
 
-  // 3. نافذة اختيار الخصوصية
   void _showPrivacySelector() {
     _dismissKeyboard();
     showModalBottomSheet(
@@ -304,7 +307,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     );
   }
 
-  // 4. نافذة إضافة الشعور/النشاط
   void _showFeelingPicker() {
     _dismissKeyboard();
     final List<Map<String, String>> feelings = [
@@ -374,7 +376,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     );
   }
 
-  // 5. نافذة إضافة الموقع
   void _showLocationPicker() {
     _dismissKeyboard();
     String inputLocation = '';
@@ -427,7 +428,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     );
   }
 
-  // 6. نافذة إضافة الأشخاص
   void _showTagPicker() {
     _dismissKeyboard();
     String inputPerson = '';
@@ -482,7 +482,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     );
   }
 
-  // 7. إضافة القوالب (هدف، تذكير، ملاحظة)
   void _addSpecialBlock(String title, String prefixIcon) {
     _dismissKeyboard();
     String inputText = '';
@@ -573,7 +572,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
           );
         } else if (item.file != null) {
           uploadedUrl = await mediaService.uploadFileWithProgress(
-            item.file!,
+            item.file!, // هنا هيبعت الـ dart:io File الحقيقي
             isVideo: item.mediaType == 'video',
             explicitFileName: item.fileName,
             onProgress: (progress) {
@@ -742,8 +741,8 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
         _location,
         _mediaType,
         mediaUrl,
-        null,
-        null,
+        _selectedMediaFile,  // تم التعديل: إرسال الملف المحلي بدلاً من null
+        _selectedMediaBytes, // تم التعديل: إرسال بايتس الويب بدلاً من null
         _selectedMediaName.isNotEmpty ? _selectedMediaName : null,
         _selectedPrivacy,
         effectiveCategoryId,
@@ -820,7 +819,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // --- الرأس التفاعلي (الهوية) ---
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -852,7 +850,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                     ),
                     const SizedBox(height: 20),
                     
-                    // --- الأزرار العلوية المستديرة التفاعلية ---
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       physics: const BouncingScrollPhysics(),
@@ -867,7 +864,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                       ),
                     ),
                     
-                    // عرض الأشخاص المشار إليهم (Tags) بلمسة جمالية
                     if (_taggedPeople.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Wrap(
@@ -958,7 +954,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                       ),
                     const SizedBox(height: 16),
 
-                    // --- مساحة الكتابة ---
                     TextField(
                       controller: _textController,
                       maxLines: null,
@@ -973,7 +968,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                     ),
                     const SizedBox(height: 16),
 
-                    // --- المعاينة الحية للوسائط (بصمة سينمائية) ---
                     if (_isUploadingMedia || _selectedMediaFile != null || _selectedMediaBytes != null || _selectedMediaList.isNotEmpty)
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1093,7 +1087,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
               ),
             ),
             
-            // --- شريط الأزرار المربعة السفلية ---  
             Container(
               padding: const EdgeInsets.symmetric(vertical: 12),
               decoration: BoxDecoration(
@@ -1122,7 +1115,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
             
             Divider(height: 1, color: Colors.grey[200]),
             
-            // --- الشريط السفلي (الخصوصية + زر النشر) ---
             Container(
               padding: EdgeInsets.only(left: 16, right: 16, top: 12, bottom: MediaQuery.of(context).padding.bottom > 0 ? 20 : 12),
               color: Colors.white,
