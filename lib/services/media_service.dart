@@ -1,4 +1,4 @@
-import 'dart:convert';
+Import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:dio/dio.dart';
@@ -39,7 +39,7 @@ class MediaUploadResult {
   final int? size;
   final String? error;
   final String? mimeType;
-  final String? detectedFileType;
+  final String? detectedFileType; // image|video|audio|file|document
 
   const MediaUploadResult({
     required this.success,
@@ -67,6 +67,8 @@ class MediaUploadResult {
 }
 
 class MediaService {
+  // 🔥 تم التعديل: وضعنا رابط الـ Cloudflare Worker الخاص بك مباشرة كنقطة اتصال آمنة
+  // المفاتيح السرية تم إبعادها تماماً عن كود فلاتر كما طلبت
   MediaService({String? baseUrl}) : baseUrl = baseUrl ?? 'https://zamel-2.yassin090173221.workers.dev/' {
     _dio = Dio(BaseOptions(
       connectTimeout: const Duration(minutes: 5),
@@ -77,11 +79,13 @@ class MediaService {
 
   final String baseUrl;
   late final Dio _dio;
-  static const int _maxAttempts = 3; 
-  static const int _maxFileSizeBytes = 500 * 1024 * 1024; 
+  static const int _maxAttempts = 3; // ✅ زيادة المحاولات إلى 3
+  static const int _maxFileSizeBytes = 500 * 1024 * 1024; // ✅ حد أقصى 500 ميجابايت
 
+  /// ✅ Progress callback stream for real-time tracking
   Stream<UploadProgress>? _progressStream;
 
+  /// ✅ Upload file with progress tracking
   Future<String> uploadFileWithProgress(
     File file, {
     bool isVideo = false,
@@ -100,6 +104,7 @@ class MediaService {
     return result.url!;
   }
 
+  /// ✅ Upload file with progress result
   Future<MediaUploadResult> uploadFileWithResultAndProgress(
     File file, {
     bool isVideo = false,
@@ -113,6 +118,7 @@ class MediaService {
     final dynamic ioFile = file;
     final safeFileName = _sanitizeFileName(explicitFileName ?? ioFile.path.split(RegExp(r'[\\/]+')).last);
     
+    // ✅ Detect file type and MIME type
     final fileType = _detectFileType(safeFileName, isVideo: isVideo);
     final mimeType = _getMimeType(safeFileName, isVideo: isVideo);
 
@@ -133,6 +139,7 @@ class MediaService {
           );
         }
 
+        // ✅ Validate file size
         if (length > _maxFileSizeBytes) {
           return MediaUploadResult(
             success: false,
@@ -140,6 +147,7 @@ class MediaService {
           );
         }
 
+        // ✅ Upload with progress tracking
         final response = await _dio.post(
           baseUrl,
           data: ioFile.openRead(),
@@ -152,7 +160,7 @@ class MediaService {
               'Accept': 'application/json',
               'X-Requested-With': 'flutter',
               'X-Bz-Content-Sha1': 'do_not_verify_sha1',
-              'X-File-Type': fileType, 
+              'X-File-Type': fileType, // ✅ إرسال نوع الملف المكتشف
             },
           ),
           onSendProgress: (int sent, int total) {
@@ -205,11 +213,9 @@ class MediaService {
     );
   }
 
-  // 🔥 هنا الضربة القاضية والتصحيح المعماري الأسطوري 🔥
   Future<MediaUploadResult> uploadXFileWithResult(
     XFile file, {
     bool isVideo = false,
-    Function(UploadProgress)? onProgress, // تم إضافة دعم التقدم
   }) async {
     final safeFileName = _sanitizeFileName(file.name);
     final mimeType = _getMimeType(safeFileName, isVideo: isVideo);
@@ -217,61 +223,9 @@ class MediaService {
 
     if (kIsWeb) {
       final bytes = await file.readAsBytes();
-      return uploadBytesWithResultAndProgress(
-        bytes, 
-        safeFileName, 
-        isVideo: isVideo,
-        onProgress: onProgress,
-      );
+      return _uploadBytesWithRetry(bytes, safeFileName, mimeType, fileType);
     } else {
-      // 🚀 استخدام XFile مباشرة كـ Stream يتخطى كل مشاكل أندرويد ويمنع الكراش
-      return _uploadWithRetry(() async {
-        final length = await file.length();
-        
-        if (length == 0) {
-          return const MediaUploadResult(success: false, error: 'الملف المختار فارغ');
-        }
-
-        if (length > _maxFileSizeBytes) {
-          return MediaUploadResult(
-            success: false,
-            error: 'حجم الملف يتجاوز الحد الأقصى (${_maxFileSizeBytes ~/ (1024 * 1024)} MB)',
-          );
-        }
-
-        final response = await _dio.post(
-          baseUrl,
-          data: file.openRead(), // 👈 السحر هنا: قراءة الملف بأمان تام من مسار content://
-          options: Options(
-            headers: {
-              'File-Name': safeFileName,
-              'X-File-Name': safeFileName,
-              'Content-Type': mimeType,
-              'Content-Length': length,
-              'Accept': 'application/json',
-              'X-Requested-With': 'flutter',
-              'X-Bz-Content-Sha1': 'do_not_verify_sha1',
-              'X-File-Type': fileType,
-            },
-          ),
-          onSendProgress: (int sent, int total) {
-            if (onProgress != null) {
-              onProgress(UploadProgress(
-                uploadedBytes: sent,
-                totalBytes: total,
-                percentComplete: total > 0 ? (sent / total).clamp(0.0, 1.0) : 0.0,
-                startedAt: DateTime.now(),
-              ));
-            }
-          },
-        );
-        
-        final result = _parseDioResponse(response.data);
-        return result.copyWith(
-          mimeType: mimeType,
-          detectedFileType: fileType,
-        );
-      });
+      return uploadFileWithResult(File(file.path), isVideo: isVideo, explicitFileName: file.name);
     }
   }
 
@@ -377,6 +331,7 @@ class MediaService {
     }
   }
 
+  /// ✅ Enhanced bytes upload with retry and file type detection
   Future<MediaUploadResult> _uploadBytesWithRetry(
     Uint8List bytes,
     String safeFileName,
@@ -390,6 +345,7 @@ class MediaService {
       );
     }
 
+    // ✅ Validate file size
     if (bytes.length > _maxFileSizeBytes) {
       return MediaUploadResult(
         success: false,
@@ -410,7 +366,7 @@ class MediaService {
             'Accept': 'application/json',
             'X-Requested-With': 'flutter',
             'X-Bz-Content-Sha1': 'do_not_verify_sha1',
-            'X-File-Type': fileType, 
+            'X-File-Type': fileType, // ✅ إرسال نوع الملف المكتشف
           },
         ),
       );
@@ -423,6 +379,7 @@ class MediaService {
     });
   }
 
+  /// ✅ Enhanced retry logic with better error handling
   Future<MediaUploadResult> _uploadWithRetry(
     Future<MediaUploadResult> Function() uploadTask, {
     Function(UploadProgress)? onProgress,
@@ -442,9 +399,11 @@ class MediaService {
           final statusCode = error.response?.statusCode ?? 0;
           final errorMessage = error.response?.data?.toString() ?? error.message ?? '';
           
+          // ✅ Classify error for better retry logic
           if (_isRetryableError(statusCode, errorMessage)) {
             lastError = 'خطأ في الاتصال (محاولة $attempt/$_maxAttempts): $errorMessage';
           } else {
+            // Non-retryable error
             return MediaUploadResult(
               success: false,
               error: 'خطأ غير قابل للإعادة: $errorMessage (الرمز: $statusCode)',
@@ -456,6 +415,7 @@ class MediaService {
       }
 
       if (attempt < _maxAttempts) {
+        // ✅ Exponential backoff: 500ms, 1s, 2s
         final delayMs = 500 * (1 << (attempt - 1));
         await Future.delayed(Duration(milliseconds: delayMs));
       }
@@ -467,11 +427,14 @@ class MediaService {
     );
   }
 
+  /// ✅ Determine if error is retryable
   bool _isRetryableError(int statusCode, String errorMessage) {
+    // Retryable status codes
     if (statusCode == 408 || statusCode == 429 || statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504) {
       return true;
     }
     
+    // Retryable network errors
     if (errorMessage.contains('timeout') || 
         errorMessage.contains('connection') || 
         errorMessage.contains('reset') ||
@@ -508,9 +471,11 @@ class MediaService {
     return normalized;
   }
 
+  /// ✅ Detect actual file type from extension
   String _detectFileType(String fileName, {required bool isVideo}) {
     final lowered = fileName.toLowerCase();
     
+    // Video files
     if (lowered.endsWith('.mp4') || lowered.endsWith('.mov') || 
         lowered.endsWith('.m4v') || lowered.endsWith('.webm') ||
         lowered.endsWith('.avi') || lowered.endsWith('.mkv') ||
@@ -519,6 +484,7 @@ class MediaService {
       return 'video';
     }
     
+    // Image files
     if (lowered.endsWith('.jpg') || lowered.endsWith('.jpeg') || 
         lowered.endsWith('.png') || lowered.endsWith('.gif') ||
         lowered.endsWith('.webp') || lowered.endsWith('.svg') ||
@@ -526,6 +492,7 @@ class MediaService {
       return 'image';
     }
     
+    // Audio files
     if (lowered.endsWith('.mp3') || lowered.endsWith('.wav') || 
         lowered.endsWith('.m4a') || lowered.endsWith('.aac') ||
         lowered.endsWith('.flac') || lowered.endsWith('.ogg') ||
@@ -533,6 +500,7 @@ class MediaService {
       return 'audio';
     }
     
+    // Document files
     if (lowered.endsWith('.pdf') || lowered.endsWith('.doc') || 
         lowered.endsWith('.docx') || lowered.endsWith('.txt') ||
         lowered.endsWith('.xls') || lowered.endsWith('.xlsx') ||
@@ -542,22 +510,27 @@ class MediaService {
       return 'document';
     }
     
+    // Archive/Compressed
     if (lowered.endsWith('.zip') || lowered.endsWith('.rar') || 
         lowered.endsWith('.7z') || lowered.endsWith('.tar') ||
         lowered.endsWith('.gz')) {
       return 'archive';
     }
     
+    // If explicitly marked as video
     if (isVideo) {
       return 'video';
     }
     
+    // Default to file
     return 'file';
   }
 
+  /// ✅ Comprehensive MIME type detection
   String _getMimeType(String fileName, {required bool isVideo}) {
     final lowered = fileName.toLowerCase();
     
+    // Images
     if (lowered.endsWith('.jpg') || lowered.endsWith('.jpeg')) return 'image/jpeg';
     if (lowered.endsWith('.png')) return 'image/png';
     if (lowered.endsWith('.gif')) return 'image/gif';
@@ -566,6 +539,7 @@ class MediaService {
     if (lowered.endsWith('.bmp')) return 'image/bmp';
     if (lowered.endsWith('.ico')) return 'image/x-icon';
     
+    // Videos
     if (lowered.endsWith('.mp4')) return 'video/mp4';
     if (lowered.endsWith('.mov')) return 'video/quicktime';
     if (lowered.endsWith('.m4v')) return 'video/x-m4v';
@@ -576,6 +550,7 @@ class MediaService {
     if (lowered.endsWith('.wmv')) return 'video/x-ms-wmv';
     if (lowered.endsWith('.3gp')) return 'video/3gpp';
     
+    // Audio
     if (lowered.endsWith('.mp3')) return 'audio/mpeg';
     if (lowered.endsWith('.wav')) return 'audio/wav';
     if (lowered.endsWith('.m4a')) return 'audio/mp4';
@@ -585,6 +560,7 @@ class MediaService {
     if (lowered.endsWith('.wma')) return 'audio/x-ms-wma';
     if (lowered.endsWith('.aiff')) return 'audio/aiff';
     
+    // Documents
     if (lowered.endsWith('.pdf')) return 'application/pdf';
     if (lowered.endsWith('.doc')) return 'application/msword';
     if (lowered.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -598,16 +574,19 @@ class MediaService {
     if (lowered.endsWith('.xml')) return 'application/xml';
     if (lowered.endsWith('.html')) return 'text/html';
     
+    // Archives
     if (lowered.endsWith('.zip')) return 'application/zip';
     if (lowered.endsWith('.rar')) return 'application/vnd.rar';
     if (lowered.endsWith('.7z')) return 'application/x-7z-compressed';
     if (lowered.endsWith('.tar')) return 'application/x-tar';
     if (lowered.endsWith('.gz')) return 'application/gzip';
     
+    // Default
     return 'application/octet-stream';
   }
 }
 
+/// ✅ Extension method for better result copying
 extension MediaUploadResultExt on MediaUploadResult {
   MediaUploadResult copyWith({
     bool? success,
