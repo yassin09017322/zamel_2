@@ -36,23 +36,29 @@ class CommentService {
     String? replyToUserId,
     String? replyToUsername,
   }) async {
-    await _firestore.collection('posts').doc(postId).collection('comments').add({
-      'userId': userId,
-      'username': username,
-      'text': text,
-      'audioUrl': audioUrl,
-      'publicId': publicId,
-      'type': type ?? 'text',
-      'duration': duration ?? 0,
-      'mediaIndex': mediaIndex,
-      'replyToCommentId': replyToCommentId ?? '',
-      'replyToUserId': replyToUserId ?? '',
-      'replyToUsername': replyToUsername ?? '',
-      'timestamp': FieldValue.serverTimestamp(),
-    });
-    await _firestore.collection('posts').doc(postId).update({
-      'commentsCount': FieldValue.increment(1),
-    });
+    try {
+      await _firestore.collection('posts').doc(postId).collection('comments').add({
+        'userId': userId,
+        'username': username,
+        'text': text,
+        // 🔥 السر هنا: حماية فايربيس من الـ null عشان التعليقات ماتختفيش
+        'audioUrl': audioUrl ?? '',
+        'publicId': publicId ?? '',
+        'type': type ?? 'text',
+        'duration': duration ?? 0,
+        'mediaIndex': mediaIndex,
+        'replyToCommentId': replyToCommentId ?? '',
+        'replyToUserId': replyToUserId ?? '',
+        'replyToUsername': replyToUsername ?? '',
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+      
+      await _firestore.collection('posts').doc(postId).update({
+        'commentsCount': FieldValue.increment(1),
+      });
+    } catch (e) {
+      throw Exception('فشل رفع التعليق: $e');
+    }
   }
 
   Future<void> addLike({

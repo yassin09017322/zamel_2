@@ -1,4 +1,4 @@
-import 'package:zamel_appp/src/platform_file.dart';
+import 'dart:io' as io;
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:easy_localization/easy_localization.dart' hide TextDirection;
@@ -11,18 +11,19 @@ import '../models/category_model.dart';
 import '../providers/auth_provider.dart';
 import '../providers/settings_provider.dart';
 import '../services/category_service.dart';
-import '../services/media_service.dart'; // تم إضافة محرك الرفع هنا
+import '../services/media_service.dart'; 
 
 class _SelectedPostMedia {
   final String mediaType;
   final String fileName;
-  final File? file;
+  // 🔥 التعديل الجذري الأول: استخدام XFile مباشرة بدلاً من File
+  final XFile? xFile; 
   final Uint8List? bytes;
 
   const _SelectedPostMedia({
     required this.mediaType,
     required this.fileName,
-    this.file,
+    this.xFile,
     this.bytes,
   });
 }
@@ -52,7 +53,8 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
   final TextEditingController _textController = TextEditingController();
   final ImagePicker _picker = ImagePicker();
   
-  dynamic _selectedMediaFile;
+  // 🔥 التعديل الجذري الثاني
+  XFile? _selectedMediaXFile;
   Uint8List? _selectedMediaBytes;
   String _selectedMediaName = '';
   String _mediaType = 'none';
@@ -62,7 +64,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
   double _uploadProgress = 0.0;
   String? _uploadError;
   
-  // متغيرات التفاعل المباشر
   String _selectedPrivacy = 'public';
   String _feeling = '';
   String _location = '';
@@ -74,7 +75,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
   final List<String> _taggedPeople = [];
 
   bool get _hasSelectedMedia =>
-      _selectedMediaList.isNotEmpty || _selectedMediaFile != null || _selectedMediaBytes != null;
+      _selectedMediaList.isNotEmpty || _selectedMediaXFile != null || _selectedMediaBytes != null;
 
   final Map<String, Map<String, dynamic>> _privacyOptions = {
     'public': {'icon': Icons.public},
@@ -197,12 +198,10 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     }
   }
 
-  // 1. إغلاق الكيبورد (تحسين UX احترافي)
   void _dismissKeyboard() {
     FocusScope.of(context).unfocus();
   }
 
-  // 2. دالة فتح المعرض
   Future<void> _pickMedia() async {
     _dismissKeyboard();
     try {
@@ -232,10 +231,11 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
             bytes: await pickedFile.readAsBytes(),
           ));
         } else {
+          // 🔥 التعديل الجذري الثالث: تمرير XFile كما هو بدون أي تحويل لـ File
           selectedMedia.add(_SelectedPostMedia(
             mediaType: isVideo ? 'video' : 'image',
             fileName: pickedFile.name,
-            file: File(pickedFile.path),
+            xFile: pickedFile,
           ));
         }
       }
@@ -248,7 +248,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
           ..addAll(selectedMedia);
 
         final first = selectedMedia.first;
-        _selectedMediaFile = first.file;
+        _selectedMediaXFile = first.xFile;
         _selectedMediaBytes = first.bytes;
         _selectedMediaName = first.fileName;
         _mediaType = first.mediaType;
@@ -258,7 +258,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     }
   }
 
-  // 3. نافذة اختيار الخصوصية
   void _showPrivacySelector() {
     _dismissKeyboard();
     showModalBottomSheet(
@@ -304,7 +303,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     );
   }
 
-  // 4. نافذة إضافة الشعور/النشاط
   void _showFeelingPicker() {
     _dismissKeyboard();
     final List<Map<String, String>> feelings = [
@@ -374,7 +372,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     );
   }
 
-  // 5. نافذة إضافة الموقع
   void _showLocationPicker() {
     _dismissKeyboard();
     String inputLocation = '';
@@ -427,7 +424,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     );
   }
 
-  // 6. نافذة إضافة الأشخاص
   void _showTagPicker() {
     _dismissKeyboard();
     String inputPerson = '';
@@ -482,7 +478,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
     );
   }
 
-  // 7. إضافة القوالب (هدف، تذكير، ملاحظة)
   void _addSpecialBlock(String title, String prefixIcon) {
     _dismissKeyboard();
     String inputText = '';
@@ -556,7 +551,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
 
       for (int index = 0; index < totalItems; index++) {
         final item = _selectedMediaList[index];
-        final String uploadedUrl;
+        String uploadedUrl = '';
 
         if (kIsWeb && item.bytes != null) {
           uploadedUrl = await mediaService.uploadBytesWithProgress(
@@ -571,19 +566,23 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
               });
             },
           );
-        } else if (item.file != null) {
-          uploadedUrl = await mediaService.uploadFileWithProgress(
-            item.file!,
+        } else if (item.xFile != null) {
+          // 🔥 التعديل الجذري الرابع: استخدام دالة أطياف السحرية للرفع
+          final uploadResult = await mediaService.uploadXFileWithResult(
+            item.xFile!,
             isVideo: item.mediaType == 'video',
-            explicitFileName: item.fileName,
-            onProgress: (progress) {
-              if (!mounted) return;
-              final currentWeight = (index + progress.percentComplete) / totalItems;
-              setState(() {
-                _uploadProgress = currentWeight.clamp(0.0, 1.0);
-              });
-            },
           );
+          
+          if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
+            throw Exception(uploadResult.error ?? 'فشل رفع الملف من نوع ${item.mediaType}');
+          }
+          uploadedUrl = uploadResult.url!;
+          
+          if (mounted) {
+            setState(() {
+              _uploadProgress = ((index + 1) / totalItems).clamp(0.0, 1.0);
+            });
+          }
         } else {
           continue;
         }
@@ -598,14 +597,8 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
         if (mediaUrl.isEmpty) {
           mediaUrl = uploadedUrl;
         }
-
-        if (mounted) {
-          setState(() {
-            _uploadProgress = ((index + 1) / totalItems).clamp(0.0, 1.0);
-          });
-        }
       }
-    } else if (_selectedMediaFile != null || _selectedMediaBytes != null) {
+    } else if (_selectedMediaXFile != null || _selectedMediaBytes != null) {
       if (kIsWeb && _selectedMediaBytes != null) {
         mediaUrl = await mediaService.uploadBytesWithProgress(
           _selectedMediaBytes!,
@@ -618,25 +611,26 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
             });
           },
         );
-        uploadedMediaFiles.add({
-          'mediaType': _mediaType,
-          'url': mediaUrl,
-          'publicId': '',
-          'resourceType': _mediaType == 'video' ? 'video' : 'image',
-        });
-      } else if (_selectedMediaFile != null) {
-        mediaUrl = await mediaService.uploadFileWithProgress(
-          _selectedMediaFile!,
+      } else if (_selectedMediaXFile != null) {
+        // 🔥 استخدام دالة أطياف للرفع الفردي
+        final uploadResult = await mediaService.uploadXFileWithResult(
+          _selectedMediaXFile!,
           isVideo: _mediaType == 'video',
-          explicitFileName: _selectedMediaName,
-          onProgress: (progress) {
-            if (!mounted) return;
-            setState(() {
-              _uploadProgress = progress.percentComplete.clamp(0.0, 1.0);
-            });
-          },
         );
-        uploadedMediaFiles.add({
+        if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
+          throw Exception(uploadResult.error ?? 'فشل رفع الملف');
+        }
+        mediaUrl = uploadResult.url!;
+        
+        if (mounted) {
+          setState(() {
+            _uploadProgress = 1.0;
+          });
+        }
+      }
+      
+      if (mediaUrl.isNotEmpty) {
+         uploadedMediaFiles.add({
           'mediaType': _mediaType,
           'url': mediaUrl,
           'publicId': '',
@@ -742,8 +736,8 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
         _location,
         _mediaType,
         mediaUrl,
-        null,
-        null,
+        _selectedMediaXFile, // تمرير XFile 
+        _selectedMediaBytes, 
         _selectedMediaName.isNotEmpty ? _selectedMediaName : null,
         _selectedPrivacy,
         effectiveCategoryId,
@@ -820,7 +814,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // --- الرأس التفاعلي (الهوية) ---
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -852,7 +845,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                     ),
                     const SizedBox(height: 20),
                     
-                    // --- الأزرار العلوية المستديرة التفاعلية ---
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       physics: const BouncingScrollPhysics(),
@@ -867,7 +859,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                       ),
                     ),
                     
-                    // عرض الأشخاص المشار إليهم (Tags) بلمسة جمالية
                     if (_taggedPeople.isNotEmpty) ...[
                       const SizedBox(height: 12),
                       Wrap(
@@ -958,7 +949,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                       ),
                     const SizedBox(height: 16),
 
-                    // --- مساحة الكتابة ---
                     TextField(
                       controller: _textController,
                       maxLines: null,
@@ -973,8 +963,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                     ),
                     const SizedBox(height: 16),
 
-                    // --- المعاينة الحية للوسائط (بصمة سينمائية) ---
-                    if (_isUploadingMedia || _selectedMediaFile != null || _selectedMediaBytes != null || _selectedMediaList.isNotEmpty)
+                    if (_isUploadingMedia || _selectedMediaXFile != null || _selectedMediaBytes != null || _selectedMediaList.isNotEmpty)
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -1020,7 +1009,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                               ),
                             ],
                           ],
-                          if (!_isUploadingMedia && _uploadError == null && (_selectedMediaFile != null || _selectedMediaBytes != null || _selectedMediaList.isNotEmpty)) ...[
+                          if (!_isUploadingMedia && _uploadError == null && (_selectedMediaXFile != null || _selectedMediaBytes != null || _selectedMediaList.isNotEmpty)) ...[
                             const SizedBox(height: 12),
                             Stack(
                               children: [
@@ -1033,10 +1022,11 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                                   ),
                                   child: ClipRRect(
                                     borderRadius: BorderRadius.circular(20),
+                                    // 🔥 قراءة الملف لمعاينته باستخدام dart:io كما ينبغي للـ UI فقط
                                     child: _mediaType == 'image'
                                         ? (_selectedMediaBytes != null
                                             ? Image.memory(_selectedMediaBytes!, fit: BoxFit.cover)
-                                            : Image.file(_selectedMediaFile!, fit: BoxFit.cover))
+                                            : Image.file(io.File(_selectedMediaXFile!.path), fit: BoxFit.cover))
                                         : Container(
                                             height: 250,
                                             decoration: const BoxDecoration(
@@ -1064,7 +1054,7 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
                                   right: 12,
                                   child: GestureDetector(
                                     onTap: () => setState(() {
-                                      _selectedMediaFile = null;
+                                      _selectedMediaXFile = null;
                                       _selectedMediaBytes = null;
                                       _selectedMediaName = '';
                                       _mediaType = 'none';
@@ -1093,7 +1083,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
               ),
             ),
             
-            // --- شريط الأزرار المربعة السفلية ---  
             Container(
               padding: const EdgeInsets.symmetric(vertical: 12),
               decoration: BoxDecoration(
@@ -1122,7 +1111,6 @@ class _CreatePostWidgetState extends State<CreatePostWidget> {
             
             Divider(height: 1, color: Colors.grey[200]),
             
-            // --- الشريط السفلي (الخصوصية + زر النشر) ---
             Container(
               padding: EdgeInsets.only(left: 16, right: 16, top: 12, bottom: MediaQuery.of(context).padding.bottom > 0 ? 20 : 12),
               color: Colors.white,

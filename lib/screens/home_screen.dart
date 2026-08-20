@@ -3,12 +3,16 @@ import 'dart:async';
 import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'login_screen.dart'; 
 import '../models/app_user.dart';
-import '../providers/auth_provider.dart';
+// 🔥 الحل الجذري هنا: إعطاء اسم مستعار للاستيراد لمنع اللخبطة
+import '../providers/auth_provider.dart' as my_auth; 
 import '../providers/engagement_provider.dart';
 import '../services/call_service.dart';
-import '../services/callkit_service.dart'; // تم إضافة هذا الاستيراد لخدمة الـ CallKit
+import '../services/callkit_service.dart'; 
 import 'admin_screen.dart';
 import 'call_screen.dart';
 import 'chat_screen.dart';
@@ -36,7 +40,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final currentUser = context.watch<AuthProvider>().currentUser;
+    // 🔥 التعديل هنا: استخدام الاسم المستعار
+    final currentUser = context.watch<my_auth.AuthProvider>().currentUser;
     if (!_incomingListenerStarted && currentUser != null) {
       _incomingListenerStarted = true;
       CallService.instance.startIncomingCallListener(
@@ -48,30 +53,25 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // --- التعديل الجذري هنا: ربط المكالمات الواردة بشاشة الـ CallKit ---
   Future<void> _handleIncomingCall(IncomingCall incomingCall, AppUser currentUser) async {
     if (!mounted) return;
 
-    // 1. إظهار شاشة الرنين (CallKit) الأصلية بكامل الشاشة 
     await CallKitService.instance.showIncomingCall(
       callId: incomingCall.callId,
       callerName: incomingCall.callerName,
       type: incomingCall.type,
     );
 
-    // 2. الاستماع لرد فعل المستخدم (هل ضغط رد أم رفض؟)
     StreamSubscription? callSubscription;
     callSubscription = CallKitService.instance.callEventStream.listen((eventData) async {
       
-      // التأكد من أن الاستجابة تخص هذه المكالمة تحديداً
       if (eventData['callId'] != incomingCall.callId) return;
 
       final action = eventData['event'];
 
       if (action == 'accept') {
-        callSubscription?.cancel(); // إيقاف الاستماع
+        callSubscription?.cancel(); 
         try {
-          // بدء الجلسة في WebRTC
           final session = await CallService.instance.answerCall(
             callId: incomingCall.callId,
             type: incomingCall.type,
@@ -83,7 +83,6 @@ class _HomeScreenState extends State<HomeScreen> {
           );
           
           if (!mounted) return;
-          // الانتقال التلقائي لشاشة المكالمة 
           await Navigator.of(context).push(MaterialPageRoute(
             builder: (_) => CallScreen(session: session),
           ));
@@ -94,12 +93,11 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
       } else if (action == 'decline' || action == 'timeout') {
-        callSubscription?.cancel(); // إيقاف الاستماع
-        await CallService.instance.rejectCall(incomingCall.callId); // رفض المكالمة في السيرفر
+        callSubscription?.cancel(); 
+        await CallService.instance.rejectCall(incomingCall.callId); 
       }
     });
   }
-  // --- نهاية التعديل ---
 
   @override
   void dispose() {
@@ -128,7 +126,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final authProvider = context.watch<AuthProvider>();
+    // 🔥 التعديل هنا: استخدام الاسم المستعار
+    final authProvider = context.watch<my_auth.AuthProvider>();
     final engagementProvider = context.watch<EngagementProvider>();
 
     final isArabic = context.locale.languageCode == 'ar';
@@ -182,7 +181,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     );
                   },
                 ),
-                // الأيقونة الاحترافية الجديدة لقسم أطياف
                 IconButton(
                   tooltip: 'أطياف',
                   onPressed: () {
@@ -212,24 +210,31 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ),
-                // --- التعديل هنا: زر الخروج المحدث ---
                 IconButton(
                   icon: const Icon(Icons.logout),
                   tooltip: 'تسجيل الخروج',
                   onPressed: () async {
                     try {
-                      // استخدام read لمنع خطأ التحديث أثناء البناء
-                      await context.read<AuthProvider>().signOut();
-                      
-                      // تأخير صغير للسماح للـ StreamBuilder بتحديث حالة التحقق من المستخدم
-                      await Future.delayed(const Duration(milliseconds: 300));
-                      
-                      if (mounted) {
-                        // توجيه إجباري للشاشة ومسح كل السجل باستخدام المسار المسمى
-                        Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+                      showDialog(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (_) => const Center(child: CircularProgressIndicator(color: Colors.white)),
+                      );
+
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.clear();
+
+                      await FirebaseAuth.instance.signOut();
+
+                      if (context.mounted) {
+                        Navigator.of(context).pushAndRemoveUntil(
+                          MaterialPageRoute(builder: (_) => const LoginScreen()),
+                          (route) => false,
+                        );
                       }
                     } catch (e) {
-                      if (mounted) {
+                      if (context.mounted) {
+                        Navigator.pop(context); 
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('فشل تسجيل الخروج: $e')),
                         );
@@ -237,7 +242,6 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                   },
                 )
-                // --- نهاية التعديل ---
               ],
             ),
           ),

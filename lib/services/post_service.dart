@@ -159,10 +159,19 @@ class PostService {
     });
   }
 
+  // 🔥 تم تسريع التفاعل هنا باستخدام الـ Dot Notation مع حماية إضافية
   static Future<void> addReaction({required String postId, required String userId, required String reactionType}) async {
-    await _firestore.collection('posts').doc(postId).set({
-      'reactions': {userId: reactionType}
-    }, SetOptions(merge: true));
+    try {
+      // يحاول التحديث المباشر للمستخدم المحدد (أسرع طريقة)
+      await _firestore.collection('posts').doc(postId).update({
+        'reactions.$userId': reactionType
+      });
+    } catch (e) {
+      // لو الحقل الأساسي reactions مش موجود في الداتا بيز (للمنشورات القديمة)، هينشئه من الصفر
+      await _firestore.collection('posts').doc(postId).set({
+        'reactions': {userId: reactionType}
+      }, SetOptions(merge: true));
+    }
   }
 
   static Future<void> updateReaction({required String postId, required String userId, required String reactionType}) async {

@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:zamel_appp/src/platform_file.dart';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -86,7 +85,13 @@ class _ChannelScreenState extends State<ChannelScreen> {
         final res = await _audioService.uploadAudioFile(path);
         if (res != null) uploadedUrl = res['url'] as String;
       } else {
-        uploadedUrl = await _mediaService.uploadFile(File(path), isVideo: false, explicitFileName: 'audio_${DateTime.now().millisecondsSinceEpoch}.m4a');
+        // 🔥 التعديل الجذري للصوتيات: استخدام XFile بدل File
+        final localXFile = XFile(path);
+        final uploadResult = await _mediaService.uploadXFileWithResult(localXFile, isVideo: false);
+        if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
+          throw Exception(uploadResult.error ?? 'فشل رفع التسجيل الصوتي');
+        }
+        uploadedUrl = uploadResult.url!;
       }
 
       if (uploadedUrl.isNotEmpty) {
@@ -1101,18 +1106,30 @@ class _ChannelScreenState extends State<ChannelScreen> {
     }
   }
 
+  // 🔥 التعديل الجذري للصور والملفات والفيديوهات
   Future<void> _pickAndPublishMedia(BuildContext context, String currentUserId, {bool isVideo = false}) async {
     final result = await FilePicker.platform.pickFiles(type: isVideo ? FileType.video : FileType.image, allowCompression: true, withData: kIsWeb);
     if (result == null || result.files.isEmpty) return;
 
     final file = result.files.first;
-    final uploadTarget = file.path != null ? File(file.path!) : null;
 
     setState(() => _isPublishing = true);
     try {
-      final uploadedUrl = kIsWeb
-          ? await _mediaService.uploadBytes(file.bytes!, file.name, isVideo: isVideo)
-          : await _mediaService.uploadFile(uploadTarget!, isVideo: isVideo, explicitFileName: file.name);
+      String uploadedUrl = '';
+      if (kIsWeb && file.bytes != null) {
+        uploadedUrl = await _mediaService.uploadBytes(file.bytes!, file.name, isVideo: isVideo);
+      } else if (file.path != null) {
+        // 🔥 السحر هنا: استخدام XFile ودالة أطياف لتجاوز أي قيود أندرويد
+        final localXFile = XFile(file.path!);
+        final uploadResult = await _mediaService.uploadXFileWithResult(localXFile, isVideo: isVideo);
+        
+        if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
+          throw Exception(uploadResult.error ?? 'فشل الرفع عبر المحرك');
+        }
+        uploadedUrl = uploadResult.url!;
+      } else {
+        throw Exception('لا يوجد مسار للملف');
+      }
 
       await _channelService.publishMessage(
         channelId: widget.channelId, senderId: currentUserId, senderName: context.read<AuthProvider>().currentUser?.username ?? 'admin',

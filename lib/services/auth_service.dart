@@ -71,4 +71,13 @@ class AuthService {
   Future<void> resetPassword({required String email}) async {
     await _auth.sendPasswordResetEmail(email: email);
   }
+
+  // 4. دالة تسجيل الخروج (الإضافة الجديدة)
+  Future<void> logout() async {
+    try {
+      await _auth.signOut();
+    } catch (e) {
+      throw Exception('فشل تسجيل الخروج: $e');
+    }
+  }
 }
