@@ -72,6 +72,7 @@ class ChatService {
     String replyToText = '',
   }) async {
     final payload = {
+      'roomId': roomId,
       'senderId': senderId,
       'senderName': senderName,
       'receiverId': receiverId,

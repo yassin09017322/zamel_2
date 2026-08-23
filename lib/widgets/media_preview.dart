@@ -16,6 +16,7 @@ class MediaPreview extends StatefulWidget {
 class _MediaPreviewState extends State<MediaPreview> {
   VideoPlayerController? _videoController;
   bool _isInitialized = false;
+  Object? _initializationError;
 
   @override
   void initState() {
@@ -37,14 +38,19 @@ class _MediaPreviewState extends State<MediaPreview> {
       return;
     }
 
-    await _videoController!.initialize();
-    _videoController!
-      ..setLooping(true)
-      ..setVolume(0)
-      ..play();
+    try {
+      await _videoController!.initialize();
+      await _videoController!.setLooping(true);
+      await _videoController!.setVolume(0);
+      await _videoController!.play();
+    } catch (error) {
+      _initializationError = error;
+      await _videoController?.dispose();
+      _videoController = null;
+    }
 
     if (mounted) {
-      setState(() => _isInitialized = true);
+      setState(() => _isInitialized = _initializationError == null);
     }
   }
 
@@ -61,7 +67,11 @@ class _MediaPreviewState extends State<MediaPreview> {
         return Container(
           height: 220,
           decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), color: Colors.black12),
-          child: const Center(child: CircularProgressIndicator()),
+          child: Center(
+            child: _initializationError == null
+                ? const CircularProgressIndicator()
+                : const Icon(Icons.broken_image, color: Colors.white70, size: 40),
+          ),
         );
       }
       return ClipRRect(

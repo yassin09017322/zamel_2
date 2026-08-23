@@ -25,6 +25,7 @@ class AudioCommentService {
   bool get isRecording => _isRecording;
   int get durationSeconds => _durationSeconds;
   String? get recordingPath => _recordingPath;
+  Uint8List? get recordedBytes => _webRecordedBytes;
 
   Stream<Duration> get positionStream => _player.onPositionChanged;
   Stream<audioplayers.PlayerState> get playerStateStream => _player.onPlayerStateChanged;

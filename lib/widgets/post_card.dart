@@ -12,6 +12,7 @@ import '../services/audio_service.dart';
 import '../services/comment_service.dart';
 import '../services/local_preferences_service.dart';
 import '../services/post_service.dart';
+import 'media_preview.dart';
 
 class PostCard extends StatefulWidget {
   final Post post;
@@ -441,22 +442,7 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
     if (mediaView.length == 1) {
       final item = mediaView.first;
       if (item.mediaType == 'video') {
-        return Container(
-          width: double.infinity,
-          height: 220,
-          decoration: BoxDecoration(color: const Color(0xFF1E1E1E), borderRadius: BorderRadius.circular(18)),
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              const Positioned(bottom: 12, left: 12, child: Text('مقطع فيديو', style: TextStyle(color: Colors.white70, fontSize: 12))),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: Colors.white.withAlpha(51), shape: BoxShape.circle),
-                child: const Icon(Icons.play_arrow_rounded, size: 50, color: Colors.white),
-              ),
-            ],
-          ),
-        );
+        return MediaPreview(mediaPath: item.url, mediaType: 'video');
       }
 
       return ClipRRect(
@@ -484,13 +470,7 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
       itemBuilder: (context, index) {
         final item = mediaView[index];
         if (item.mediaType == 'video') {
-          return Container(
-            decoration: BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: const Center(child: Icon(Icons.play_arrow_rounded, color: Colors.white, size: 32)),
-          );
+          return MediaPreview(mediaPath: item.url, mediaType: 'video');
         }
 
         return ClipRRect(

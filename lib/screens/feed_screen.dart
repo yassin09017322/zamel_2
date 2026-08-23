@@ -263,7 +263,7 @@ class _FeedScreenState extends State<FeedScreen> {
         return ClipRRect(
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
           child: CreatePostWidget(
-            onPublish: (text, isTemp, loc, mediaType, mediaData, localFile, webBytes, mediaFileName, privacy, categoryId, mediaFiles) async {
+            onPublish: (text, isTemp, loc, mediaType, mediaData, localFile, webBytes, mediaFileName, privacy, categoryId, mediaFiles, postRequestId) async {
               if (categoryId == null || categoryId.trim().isEmpty) {
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -287,9 +287,10 @@ class _FeedScreenState extends State<FeedScreen> {
                 categoryId: categoryId,
                 mediaFiles: mediaFiles,
                 privacy: privacy,
+                clientRequestId: postRequestId,
               );
               
-              await PostService.addPoints(user.id, 5);
+              unawaited(PostService.addPoints(user.id, 5));
               
               if (context.mounted) {
                 Navigator.pop(context);

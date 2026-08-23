@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/foundation.dart'
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:image_picker/image_picker.dart';
@@ -61,18 +62,24 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   bool _sending = false;
   bool _isTyping = false;
   bool _isRecording = false;
+  bool _mediaUploadActive = false;
   bool _isInputFocused = false;
   bool _showScrollToBottom = false;
   bool _isTextEmpty = true;
 
-  bool get _hasCamera => !kIsWeb &&
+  bool get _hasCamera =>
+      !kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android ||
-       defaultTargetPlatform == TargetPlatform.iOS);
+          defaultTargetPlatform == TargetPlatform.iOS);
 
   ChatMessage? _replyingTo;
   String? _otherUserId;
   String? _otherUserName;
   String? _lastVisibleMessagesHash;
+  final Map<String, XFile> _failedMediaFiles = {};
+  final Map<String, ChatMessage> _localMediaMessages = {};
+  final Set<StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
+      _messageCommitSubscriptions = {};
 
   @override
   void initState() {
@@ -81,7 +88,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       _chatSyncRepository = ChatSyncRepository(roomId: widget.roomId);
       _chatSyncRepository?.start();
     }
-    
+
     _messageController.addListener(() {
       if (mounted) {
         setState(() {
@@ -91,10 +98,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     });
 
     _scrollController.addListener(_handleScroll);
-    
+
     _messageFocusNode.addListener(() {
       if (mounted) {
-        if (_messageFocusNode.hasFocus && (_showEmojiPicker || _showStickerPicker)) {
+        if (_messageFocusNode.hasFocus &&
+            (_showEmojiPicker || _showStickerPicker)) {
           setState(() {
             _showEmojiPicker = false;
             _showStickerPicker = false;
@@ -138,7 +146,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   }
 
   Future<void> retryUpload(ChatMessage failedMessage) async {
-    if (failedMessage.mediaUrl.isEmpty || failedMessage.status != MessageStatus.failed) {
+    if (_mediaUploadActive) return;
+    final localFile = _failedMediaFiles[failedMessage.firestoreId];
+    if (localFile == null || failedMessage.status != MessageStatus.failed) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('لا يمكن إعادة محاولة هذه الرسالة')),
@@ -147,60 +157,113 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       return;
     }
 
+    _mediaUploadActive = true;
     try {
       await _updateLocalMessageStatus(
         failedMessage.firestoreId,
         MessageStatus.pending,
       );
       await _updateUploadProgress(failedMessage.firestoreId, 0.0);
-
-      final fileName = failedMessage.fileName.isEmpty 
-        ? '${DateTime.now().millisecondsSinceEpoch}_media' 
-        : failedMessage.fileName;
-      
-      bool isVideo = failedMessage.mediaType == ChatMessageType.video;
-      String downloadUrl = '';
-
-      if (kIsWeb) {
-        throw Exception('لا يمكن إعادة محاولة الرفع من المتصفح. حاول تحديث الصفحة وأرسل الملف مرة أخرى.');
-      } else {
-        // 🔥 التعديل الجذري: استخدام XFile ودالة أطياف السحرية للرفع
-        XFile localXFile = XFile(failedMessage.mediaUrl);
-        await _updateUploadProgress(failedMessage.firestoreId, 0.2); // محاكاة التقدم
-        
-        final uploadResult = await _mediaService.uploadXFileWithResult(
-          localXFile, 
-          isVideo: isVideo,
-        );
-        
-        if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
-          throw Exception(uploadResult.error ?? 'فشل الرفع عبر المحرك');
-        }
-        downloadUrl = uploadResult.url!;
-        await _updateUploadProgress(failedMessage.firestoreId, 0.9);
+      if (mounted) {
+        setState(() {
+          failedMessage
+            ..status = MessageStatus.pending
+            ..uploadProgress = 0.0
+            ..uploadErrorReason = '';
+          _localMediaMessages[failedMessage.firestoreId] = failedMessage;
+        });
       }
+
+      final isVideo = failedMessage.mediaType == ChatMessageType.video;
+
+      final uploadResult = await _mediaService.uploadXFileWithResult(
+        localFile,
+        isVideo: isVideo,
+        onProgress: (progress) {
+          unawaited(
+            _updateUploadProgress(
+              failedMessage.firestoreId,
+              progress.percentComplete,
+            ),
+          );
+        },
+      );
+
+      if (!uploadResult.success || (uploadResult.url ?? '').trim().isEmpty) {
+        throw Exception(uploadResult.error ?? 'فشل الرفع عبر المحرك');
+      }
+      final downloadUrl = uploadResult.url!.trim();
+
+      await _chatService.sendMessage(
+        roomId: widget.roomId,
+        senderId: failedMessage.senderId,
+        senderName: failedMessage.senderName,
+        receiverId: failedMessage.receiverId,
+        messageId: failedMessage.firestoreId,
+        text: failedMessage.text,
+        mediaType: failedMessage.mediaType,
+        mediaUrl: downloadUrl,
+        fileName: failedMessage.fileName,
+        fileType: failedMessage.fileType,
+        fileSize: failedMessage.fileSize,
+        status: MessageStatus.sent,
+        isDisappearing: failedMessage.isDisappearing,
+        disappearingDurationSeconds: failedMessage.disappearingDurationSeconds,
+        replyToMessageId: failedMessage.replyToMessageId,
+        replyToSenderName: failedMessage.replyToSenderName,
+        replyToMediaType: failedMessage.replyToMediaType,
+        replyToText: failedMessage.replyToText,
+      );
 
       await _updateLocalMessageStatus(
         failedMessage.firestoreId,
         MessageStatus.sent,
         mediaUrl: downloadUrl,
       );
+      if (mounted) {
+        setState(() {
+          failedMessage
+            ..status = MessageStatus.sent
+            ..mediaUrl = downloadUrl
+            ..uploadProgress = 1.0;
+          _localMediaMessages[failedMessage.firestoreId] = failedMessage;
+        });
+      }
+      _failedMediaFiles.remove(failedMessage.firestoreId);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إعادة الرفع بنجاح')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('تم إعادة الرفع بنجاح')));
       }
     } catch (error) {
       debugPrint('Retry upload error: $error');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشلت إعادة المحاولة: $error')),
-        );
-      }
       try {
-        await _updateLocalMessageError(failedMessage.firestoreId, error.toString());
+        await _updateLocalMessageStatus(
+          failedMessage.firestoreId,
+          MessageStatus.failed,
+        );
+        await _updateLocalMessageError(
+          failedMessage.firestoreId,
+          error.toString(),
+        );
+        if (mounted) {
+          setState(() {
+            failedMessage
+              ..status = MessageStatus.failed
+              ..uploadErrorReason = error.toString()
+              ..uploadProgress = 0.0;
+            _localMediaMessages[failedMessage.firestoreId] = failedMessage;
+          });
+        }
       } catch (_) {}
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('فشلت إعادة المحاولة: $error')));
+      }
+    } finally {
+      _mediaUploadActive = false;
     }
   }
 
@@ -209,6 +272,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     _pendingTimeoutTimer?.cancel();
     _presenceRefreshTimer?.cancel();
     _disappearingCleanupTimer?.cancel();
+    for (final subscription in _messageCommitSubscriptions) {
+      unawaited(subscription.cancel());
+    }
+    _messageCommitSubscriptions.clear();
     _scrollController.removeListener(_handleScroll);
     _scrollController.dispose();
     _messageFocusNode.dispose();
@@ -287,7 +354,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       _showStickerPicker = false;
     });
 
-    final String tempMessageId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+    final String tempMessageId =
+        'local_${DateTime.now().microsecondsSinceEpoch}';
 
     final ChatMessage localMessage = ChatMessage()
       ..firestoreId = tempMessageId
@@ -324,9 +392,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       _monitorMessageCommit(cloudMessageId);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل إرسال الملصق: $error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('فشل إرسال الملصق: $error')));
       }
       try {
         await _updateLocalMessageStatus(tempMessageId, MessageStatus.failed);
@@ -341,7 +409,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     setState(() => _sending = true);
     _messageController.clear();
 
-    final String tempMessageId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+    final String tempMessageId =
+        'local_${DateTime.now().microsecondsSinceEpoch}';
 
     final ChatMessage localMessage = ChatMessage()
       ..firestoreId = tempMessageId
@@ -389,9 +458,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       _monitorMessageCommit(cloudMessageId);
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل الإرسال: $error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('فشل الإرسال: $error')));
       }
       try {
         await _updateLocalMessageStatus(tempMessageId, MessageStatus.failed);
@@ -403,22 +472,32 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     }
   }
 
-  // 🔥 التعديل الجذري: استخدام XFile لتجاوز حماية أندرويد بالكامل
   Future<void> _uploadAndSendMedia(
     XFile? file,
     String mediaType,
     String textPlaceholder, {
     Uint8List? webBytes,
     String? webFileName,
-    String? folder,
     String? fileType,
     int? fileSize,
   }) async {
-    final String tempMessageId = 'local_${DateTime.now().microsecondsSinceEpoch}';
-    
+    if (_mediaUploadActive) return;
+    _mediaUploadActive = true;
+    final String tempMessageId =
+        'local_${DateTime.now().microsecondsSinceEpoch}';
+
+    final uploadFile =
+        file ??
+        (webBytes != null
+            ? XFile.fromData(webBytes, name: webFileName ?? 'chat_media')
+            : null);
+    if (uploadFile != null) {
+      _failedMediaFiles[tempMessageId] = uploadFile;
+    }
+
     String getFileName() {
       if (webFileName != null) return webFileName;
-      if (file != null) return file.name;
+      if (uploadFile != null) return uploadFile.name;
       return '';
     }
 
@@ -432,7 +511,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       ..mediaType = mediaType
       ..fileName = getFileName()
       ..fileType = fileType ?? ''
-      ..fileSize = fileSize ?? (file != null ? await file.length() : 0)
+      ..fileSize =
+          fileSize ?? (uploadFile != null ? await uploadFile.length() : 0)
       ..status = MessageStatus.pending
       ..uploadProgress = 0.0
       ..uploadStartedAt = DateTime.now()
@@ -446,59 +526,58 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
     try {
       await _saveLocalMessage(localMessage);
+      if (mounted) {
+        setState(() => _localMediaMessages[tempMessageId] = localMessage);
+      }
     } catch (_) {}
-    
+
     if (mounted) {
       _clearReply();
       _scrollToBottom();
     }
 
     try {
-      final fileName = getFileName().isEmpty ? '${DateTime.now().millisecondsSinceEpoch}_media_file' : getFileName();
-      String downloadUrl = '';
-      
-      bool isVideo = (mediaType == ChatMessageType.video);
-      
-      if (kIsWeb && webBytes != null) {
-        downloadUrl = await _mediaService.uploadBytes(
-          webBytes, 
-          fileName, 
-          isVideo: isVideo
-        );
-      } else if (file != null) {
-        // 🔥 رفع الملف باستخدام دالة أطياف الماسية
-        _updateUploadProgress(tempMessageId, 0.2);
-        
-        final uploadResult = await _mediaService.uploadXFileWithResult(
-          file,
-          isVideo: isVideo,
-        );
-        
-        if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
-          throw Exception(uploadResult.error ?? 'فشل الرفع عبر المحرك');
-        }
-        downloadUrl = uploadResult.url!;
-        _updateUploadProgress(tempMessageId, 0.9);
-      } else {
+      final fileName = getFileName().isEmpty
+          ? '${DateTime.now().millisecondsSinceEpoch}_media_file'
+          : getFileName();
+      if (uploadFile == null) {
         throw Exception('لم يتم العثور على ملف صالح للرفع');
       }
 
-      if (downloadUrl.isEmpty) throw Exception('فشل الرفع عبر المحرك');
+      final isVideo = mediaType == ChatMessageType.video;
+      final uploadResult = await _mediaService.uploadXFileWithResult(
+        uploadFile,
+        isVideo: isVideo,
+        onProgress: (progress) {
+          unawaited(
+            _updateUploadProgress(tempMessageId, progress.percentComplete),
+          );
+        },
+      );
+      final downloadUrl = uploadResult.url?.trim() ?? '';
+      if (!uploadResult.success || downloadUrl.isEmpty) {
+        throw Exception(uploadResult.error ?? 'فشل الرفع عبر المحرك');
+      }
 
       String actualMediaType = mediaType;
       String actualFileType = fileType ?? '';
-      
+
       if (mediaType == ChatMessageType.file) {
         final lowerFileName = fileName.toLowerCase();
         if (lowerFileName.endsWith('.pdf')) {
           actualFileType = 'pdf';
-        } else if (lowerFileName.endsWith('.doc') || lowerFileName.endsWith('.docx')) {
+        } else if (lowerFileName.endsWith('.doc') ||
+            lowerFileName.endsWith('.docx')) {
           actualFileType = 'word';
-        } else if (lowerFileName.endsWith('.xls') || lowerFileName.endsWith('.xlsx')) {
+        } else if (lowerFileName.endsWith('.xls') ||
+            lowerFileName.endsWith('.xlsx')) {
           actualFileType = 'excel';
-        } else if (lowerFileName.endsWith('.ppt') || lowerFileName.endsWith('.pptx')) {
+        } else if (lowerFileName.endsWith('.ppt') ||
+            lowerFileName.endsWith('.pptx')) {
           actualFileType = 'powerpoint';
-        } else if (lowerFileName.endsWith('.zip') || lowerFileName.endsWith('.rar') || lowerFileName.endsWith('.7z')) {
+        } else if (lowerFileName.endsWith('.zip') ||
+            lowerFileName.endsWith('.rar') ||
+            lowerFileName.endsWith('.7z')) {
           actualFileType = 'archive';
         }
       }
@@ -514,7 +593,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         mediaUrl: downloadUrl,
         fileName: actualMediaType == ChatMessageType.file ? fileName : '',
         fileType: actualMediaType == ChatMessageType.file ? actualFileType : '',
-        fileSize: fileSize ?? 0,
+        fileSize: fileSize ?? uploadResult.size ?? localMessage.fileSize,
         status: MessageStatus.sent,
         isDisappearing: _selectedDisappearingDurationSeconds > 0,
         disappearingDurationSeconds: _selectedDisappearingDurationSeconds,
@@ -529,29 +608,49 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         MessageStatus.sent,
         mediaUrl: downloadUrl,
       );
-      
+      if (mounted) {
+        setState(() {
+          localMessage
+            ..status = MessageStatus.sent
+            ..mediaUrl = downloadUrl
+            ..uploadProgress = 1.0;
+          _localMediaMessages[tempMessageId] = localMessage;
+        });
+      }
+      _failedMediaFiles.remove(tempMessageId);
+
       _monitorMessageCommit(cloudMessageId);
     } catch (error) {
       debugPrint('Upload error: $error');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('فشل رفع الملف: $error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('فشل رفع الملف: $error')));
       }
       try {
-        await _updateLocalMessageStatus(
-          tempMessageId,
-          MessageStatus.failed,
-        );
+        await _updateLocalMessageStatus(tempMessageId, MessageStatus.failed);
         await _updateLocalMessageError(tempMessageId, error.toString());
+        if (mounted) {
+          setState(() {
+            localMessage
+              ..status = MessageStatus.failed
+              ..uploadErrorReason = error.toString()
+              ..uploadProgress = 0.0;
+            _localMediaMessages[tempMessageId] = localMessage;
+          });
+        }
       } catch (_) {}
+    } finally {
+      _mediaUploadActive = false;
     }
   }
 
   Future<void> _pickMedia(ImageSource source, {bool isVideo = false}) async {
     if (source == ImageSource.camera && !_hasCamera) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الكاميرا غير مدعومة على هذا الجهاز')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('الكاميرا غير مدعومة على هذا الجهاز')),
+        );
       }
       return;
     }
@@ -573,7 +672,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           webFileName: file.name,
         );
       } else {
-        // 🔥 تمرير XFile مباشرة بدون تحويل
         await _uploadAndSendMedia(
           file,
           isVideo ? ChatMessageType.video : ChatMessageType.image,
@@ -589,7 +687,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     try {
       final result = await fp.FilePicker.platform.pickFiles(
         allowMultiple: true,
-        type: isVideo ? fp.FileType.media : fp.FileType.image,
+        type: isVideo ? fp.FileType.video : fp.FileType.image,
         withData: kIsWeb,
       );
 
@@ -620,7 +718,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             fileSize: pickedFile.size,
           );
         } else if (pickedFile.path != null) {
-          // 🔥 تحويل المسار إلى XFile آمن
           XFile localXFile = XFile(pickedFile.path!);
           await _uploadAndSendMedia(
             localXFile,
@@ -669,7 +766,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             fileSize: pickedFile.size,
           );
         } else if (pickedFile.path != null) {
-          // 🔥 تحويل المسار إلى XFile آمن
           XFile localXFile = XFile(pickedFile.path!);
           await _uploadAndSendMedia(
             localXFile,
@@ -742,7 +838,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     });
   }
 
-  Future<void> _updateUploadProgress(String firestoreId, double progress) async {
+  Future<void> _updateUploadProgress(
+    String firestoreId,
+    double progress,
+  ) async {
     final isar = await IsarService.init();
     if (isar == null) return;
 
@@ -758,14 +857,22 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         existing.uploadProgress = progress.clamp(0.0, 1.0);
         await isar.chatMessages.put(existing);
       });
-      
+
+      final localMessage = _localMediaMessages[firestoreId];
+      if (localMessage != null) {
+        localMessage.uploadProgress = progress.clamp(0.0, 1.0);
+      }
+
       if (mounted) {
         setState(() {});
       }
     } catch (_) {}
   }
 
-  Future<void> _updateLocalMessageError(String firestoreId, String errorReason) async {
+  Future<void> _updateLocalMessageError(
+    String firestoreId,
+    String errorReason,
+  ) async {
     final isar = await IsarService.init();
     if (isar == null) return;
 
@@ -781,7 +888,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         existing.uploadErrorReason = errorReason;
         await isar.chatMessages.put(existing);
       });
-      
+
       if (mounted) {
         setState(() {});
       }
@@ -801,10 +908,16 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           if (!snapshot.metadata.hasPendingWrites) {
             await _updateLocalMessageStatus(firestoreId, MessageStatus.sent);
             await sub?.cancel();
+            if (sub != null) {
+              _messageCommitSubscriptions.remove(sub!);
+            }
             sub = null;
           }
         } catch (_) {}
       });
+      if (sub != null) {
+        _messageCommitSubscriptions.add(sub!);
+      }
     } catch (_) {}
   }
 
@@ -816,7 +929,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         if (message.firestoreId.startsWith('local_')) continue;
         if (message.status == MessageStatus.delivered ||
             message.status == MessageStatus.seen ||
-            message.status == MessageStatus.read) continue;
+            message.status == MessageStatus.read)
+          continue;
 
         if (message.status == MessageStatus.sent) {
           await FirebaseFirestore.instance
@@ -825,11 +939,13 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
               .collection('messages')
               .doc(message.firestoreId)
               .update({'status': MessageStatus.delivered});
-          
-          await _updateLocalMessageStatus(message.firestoreId, MessageStatus.delivered);
+
+          await _updateLocalMessageStatus(
+            message.firestoreId,
+            MessageStatus.delivered,
+          );
         }
-      } catch (_) {
-      }
+      } catch (_) {}
     }
   }
 
@@ -842,8 +958,12 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
     for (final message in pendingMessages) {
       if (message.roomId != widget.roomId) continue;
-      if (message.status == MessageStatus.pending && message.timestamp.isBefore(threshold)) {
-        await _updateLocalMessageStatus(message.firestoreId, MessageStatus.failed);
+      if (message.status == MessageStatus.pending &&
+          message.timestamp.isBefore(threshold)) {
+        await _updateLocalMessageStatus(
+          message.firestoreId,
+          MessageStatus.failed,
+        );
       }
     }
   }
@@ -882,7 +1002,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       }
 
       final path = await _audioService.startRecording();
-      setState(() => _isRecording = path != null);
+      if (mounted) {
+        setState(() => _isRecording = path != null);
+      }
     } catch (e) {
       debugPrint('Error starting record: $e');
     }
@@ -890,16 +1012,22 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
   Future<void> _stopRecordingAndSend() async {
     try {
-      final path = await _audioService.stopRecording();
-      setState(() => _isRecording = false);
       if (!mounted) return;
+      final path = await _audioService.stopRecording();
+      if (!mounted) return;
+      setState(() => _isRecording = false);
       if (path == null) return;
 
       final shouldSend = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: const Text('مراجعة التسجيل الصوتي', style: TextStyle(fontWeight: FontWeight.bold)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          title: const Text(
+            'مراجعة التسجيل الصوتي',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
           content: const Text('هل تريد إرسال التسجيل الصوتي الآن؟'),
           actions: [
             TextButton(
@@ -911,12 +1039,17 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                 if (!mounted) return;
                 await _audioService.play(path);
               },
-              child: const Text('استماع', style: TextStyle(color: Color(0xFF5B6CFF))),
+              child: const Text(
+                'استماع',
+                style: TextStyle(color: Color(0xFF5B6CFF)),
+              ),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF5B6CFF),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
               onPressed: () => Navigator.pop(context, true),
               child: const Text('إرسال', style: TextStyle(color: Colors.white)),
@@ -935,21 +1068,21 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       }
 
       if (kIsWeb) {
-        final uploadResult = await _audioService.uploadAudioFile(path);
-        if (uploadResult != null && uploadResult['url'] != null) {
-          await _chatService.sendMessage(
-            roomId: widget.roomId,
-            senderId: widget.currentUser.id,
-            senderName: widget.currentUser.username,
-            receiverId: _otherUserId ?? '',
-            text: '🎤 مقطع صوتي',
-            mediaType: ChatMessageType.audio,
-            mediaUrl: uploadResult['url'] as String,
-            status: MessageStatus.sent,
-          );
+        final recordedBytes = _audioService.recordedBytes;
+        if (recordedBytes == null || recordedBytes.isEmpty) {
+          throw Exception('لم يتم العثور على بيانات التسجيل الصوتي');
         }
+
+        await _uploadAndSendMedia(
+          null,
+          ChatMessageType.audio,
+          '🎤 مقطع صوتي',
+          webBytes: recordedBytes,
+          webFileName: path.toLowerCase().endsWith('.webm')
+              ? 'comment.webm'
+              : 'comment.wav',
+        );
       } else {
-        // 🔥 تحويل المسار إلى XFile آمن
         XFile localXFile = XFile(path);
         await _uploadAndSendMedia(
           localXFile,
@@ -958,7 +1091,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         );
       }
     } catch (e) {
-      setState(() => _isRecording = false);
+      if (mounted) {
+        setState(() => _isRecording = false);
+      }
     }
   }
 
@@ -976,28 +1111,52 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             color: Colors.white,
             borderRadius: BorderRadius.circular(30),
             boxShadow: [
-              BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 20, offset: const Offset(0, -5))
-            ]
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 20,
+                offset: const Offset(0, -5),
+              ),
+            ],
           ),
           child: Wrap(
             alignment: WrapAlignment.center,
             spacing: 28,
             runSpacing: 28,
             children: [
-              _buildAttachmentIcon(Icons.insert_drive_file_rounded, const Color(0xFF5B6CFF), 'مستند', _pickDocument),
+              _buildAttachmentIcon(
+                Icons.insert_drive_file_rounded,
+                const Color(0xFF5B6CFF),
+                'مستند',
+                _pickDocument,
+              ),
               if (_hasCamera)
-                _buildAttachmentIcon(Icons.camera_alt_rounded, const Color(0xFF10B981), 'كاميرا', () {
+                _buildAttachmentIcon(
+                  Icons.camera_alt_rounded,
+                  const Color(0xFF10B981),
+                  'كاميرا',
+                  () {
+                    Navigator.pop(context);
+                    _pickMedia(ImageSource.camera, isVideo: false);
+                  },
+                ),
+              _buildAttachmentIcon(
+                Icons.image_rounded,
+                const Color(0xFFF59E0B),
+                'المعرض',
+                () {
                   Navigator.pop(context);
-                  _pickMedia(ImageSource.camera, isVideo: false);
-                }),
-              _buildAttachmentIcon(Icons.image_rounded, const Color(0xFFF59E0B), 'المعرض', () {
-                Navigator.pop(context);
-                _pickMediaFromGallery(isVideo: false);
-              }),
-              _buildAttachmentIcon(Icons.videocam_rounded, const Color(0xFFE94057), 'فيديو', () {
-                Navigator.pop(context);
-                _pickMediaFromGallery(isVideo: true);
-              }),
+                  _pickMediaFromGallery(isVideo: false);
+                },
+              ),
+              _buildAttachmentIcon(
+                Icons.videocam_rounded,
+                const Color(0xFFE94057),
+                'فيديو',
+                () {
+                  Navigator.pop(context);
+                  _pickMediaFromGallery(isVideo: true);
+                },
+              ),
             ],
           ),
         ),
@@ -1005,7 +1164,12 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     );
   }
 
-  Widget _buildAttachmentIcon(IconData icon, Color color, String label, VoidCallback onTap) {
+  Widget _buildAttachmentIcon(
+    IconData icon,
+    Color color,
+    String label,
+    VoidCallback onTap,
+  ) {
     return GestureDetector(
       onTap: onTap,
       child: Column(
@@ -1014,13 +1178,20 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: color.withOpacity(0.1), 
+              color: color.withOpacity(0.1),
               shape: BoxShape.circle,
             ),
             child: Icon(icon, color: color, size: 28),
           ),
           const SizedBox(height: 10),
-          Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.black87)),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
         ],
       ),
     );
@@ -1029,16 +1200,21 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   Widget _buildPinnedBanner(Map<String, dynamic> data) {
     String text = data['text'] ?? '';
     String mediaType = data['mediaType'] ?? 'text';
-    String senderName = data['senderName'] ?? '';
-    
+
     String preview = text;
-    if (mediaType == 'image') preview = '📷 صورة';
-    else if (mediaType == 'video') preview = '🎥 فيديو';
-    else if (mediaType == 'audio') preview = '🎤 مقطع صوتي';
-    else if (mediaType == 'file') preview = '📄 ملف';
-    else if (mediaType == 'sticker') preview = 'ملصق';
-    else if (mediaType == 'call') preview = '📞 مكالمة';
-    
+    if (mediaType == 'image')
+      preview = '📷 صورة';
+    else if (mediaType == 'video')
+      preview = '🎥 فيديو';
+    else if (mediaType == 'audio')
+      preview = '🎤 مقطع صوتي';
+    else if (mediaType == 'file')
+      preview = '📄 ملف';
+    else if (mediaType == 'sticker')
+      preview = 'ملصق';
+    else if (mediaType == 'call')
+      preview = '📞 مكالمة';
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
@@ -1051,7 +1227,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             color: Colors.black.withOpacity(0.03),
             blurRadius: 6,
             offset: const Offset(0, 3),
-          )
+          ),
         ],
       ),
       child: Row(
@@ -1076,10 +1252,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                   preview.isNotEmpty ? preview : 'مرفق',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.black54,
-                    fontSize: 13,
-                  ),
+                  style: const TextStyle(color: Colors.black54, fontSize: 13),
                 ),
               ],
             ),
@@ -1108,7 +1281,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
               children: [
                 CircleAvatar(
                   backgroundColor: const Color(0xFF5B6CFF).withOpacity(0.15),
-                  child: const Icon(Icons.person, color: Color(0xFF5B6CFF), size: 22),
+                  child: const Icon(
+                    Icons.person,
+                    color: Color(0xFF5B6CFF),
+                    size: 22,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -1119,23 +1296,37 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                     children: [
                       Text(
                         _otherUserName ?? 'دردشة خاصة',
-                        style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.bold, fontSize: 16),
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
                       ),
                       if (_otherUserId != null && _otherUserId!.isNotEmpty)
                         StreamBuilder<DatabaseEvent>(
-                          stream: FirebaseDatabase.instance.ref().child('presence/$_otherUserId').onValue,
+                          stream: FirebaseDatabase.instance
+                              .ref()
+                              .child('presence/$_otherUserId')
+                              .onValue,
                           builder: (context, snapshot) {
                             bool isOnline = false;
-                            if (snapshot.hasData && snapshot.data?.snapshot.value != null) {
-                              final data = snapshot.data!.snapshot.value as Map<dynamic, dynamic>;
+                            if (snapshot.hasData &&
+                                snapshot.data?.snapshot.value != null) {
+                              final data =
+                                  snapshot.data!.snapshot.value
+                                      as Map<dynamic, dynamic>;
                               isOnline = data['online'] == true;
                             }
                             return Text(
                               isOnline ? 'متصل الآن' : 'غير متصل',
                               style: TextStyle(
-                                color: isOnline ? const Color(0xFF2EC7A5) : Colors.grey,
+                                color: isOnline
+                                    ? const Color(0xFF2EC7A5)
+                                    : Colors.grey,
                                 fontSize: 12,
-                                fontWeight: isOnline ? FontWeight.bold : FontWeight.w500,
+                                fontWeight: isOnline
+                                    ? FontWeight.bold
+                                    : FontWeight.w500,
                               ),
                             );
                           },
@@ -1147,7 +1338,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             ),
             actions: [
               IconButton(
-                icon: const Icon(Icons.phone_outlined, color: Color(0xFF5B6CFF), size: 24),
+                icon: const Icon(
+                  Icons.phone_outlined,
+                  color: Color(0xFF5B6CFF),
+                  size: 24,
+                ),
                 onPressed: () async {
                   if (_otherUserId == null) return;
                   try {
@@ -1160,17 +1355,29 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                       type: 'audio',
                     );
                     if (mounted && session != null) {
-                      Navigator.push(context, MaterialPageRoute(builder: (_) => CallScreen(session: session)));
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => CallScreen(session: session),
+                        ),
+                      );
                     }
                   } catch (e) {
-                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر بدء المكالمة: $e')));
+                    if (mounted)
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('تعذر بدء المكالمة: $e')),
+                      );
                   }
                 },
               ),
               Padding(
                 padding: const EdgeInsets.only(left: 6.0),
                 child: IconButton(
-                  icon: const Icon(Icons.videocam_outlined, color: Color(0xFF5B6CFF), size: 26),
+                  icon: const Icon(
+                    Icons.videocam_outlined,
+                    color: Color(0xFF5B6CFF),
+                    size: 26,
+                  ),
                   onPressed: () async {
                     if (_otherUserId == null) return;
                     try {
@@ -1183,10 +1390,18 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                         type: 'video',
                       );
                       if (mounted && session != null) {
-                        Navigator.push(context, MaterialPageRoute(builder: (_) => CallScreen(session: session)));
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => CallScreen(session: session),
+                          ),
+                        );
                       }
                     } catch (e) {
-                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر بدء المكالمة: $e')));
+                      if (mounted)
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('تعذر بدء المكالمة: $e')),
+                        );
                     }
                   },
                 ),
@@ -1198,7 +1413,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           child: Column(
             children: [
               Expanded(
-                child: StreamBuilder<QuerySnapshot>(
+                child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                   stream: FirebaseFirestore.instance
                       .collection('chatRooms')
                       .doc(widget.roomId)
@@ -1208,20 +1423,27 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const Center(
-                        child: CircularProgressIndicator(color: Color(0xFF5B6CFF)),
-                      );
-                    }
-                    
-                    if (snapshot.hasError) {
-                      return Center(
-                        child: Text(
-                          'تعذر تحميل الرسائل 😢',
-                          style: TextStyle(color: Colors.red.shade400, fontWeight: FontWeight.bold),
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF5B6CFF),
                         ),
                       );
                     }
 
-                    if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Text(
+                          'تعذر تحميل الرسائل 😢',
+                          style: TextStyle(
+                            color: Colors.red.shade400,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      );
+                    }
+
+                    if (!snapshot.hasData ||
+                      (snapshot.data!.docs.isEmpty &&
+                        _localMediaMessages.isEmpty)) {
                       return Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -1233,24 +1455,46 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                                 color: const Color(0xFF5B6CFF).withOpacity(0.1),
                                 shape: BoxShape.circle,
                               ),
-                              child: const Icon(Icons.chat_bubble_outline_rounded, size: 64, color: Color(0xFF5B6CFF)),
+                              child: const Icon(
+                                Icons.chat_bubble_outline_rounded,
+                                size: 64,
+                                color: Color(0xFF5B6CFF),
+                              ),
                             ),
                             const SizedBox(height: 20),
                             const Text(
                               'لا توجد رسائل بعد..',
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                              ),
                             ),
                             const SizedBox(height: 8),
                             const Text(
                               'كن أول من يبدأ المحادثة 👋',
-                              style: TextStyle(color: Colors.grey, fontSize: 15),
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 15,
+                              ),
                             ),
                           ],
                         ),
                       );
                     }
 
-                    final docs = snapshot.data!.docs;
+                    final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs =
+                      snapshot.data!.docs;
+                    final firestoreIds = docs.map((doc) => doc.id).toSet();
+                    final localOnlyMessages = _localMediaMessages.values
+                        .where(
+                          (message) =>
+                              !firestoreIds.contains(message.firestoreId),
+                        )
+                        .toList()
+                      ..sort(
+                        (a, b) => b.timestamp.compareTo(a.timestamp),
+                      );
                     final pinnedDocs = docs.where((d) {
                       final data = d.data() as Map<String, dynamic>;
                       return data['isPinned'] == true;
@@ -1259,34 +1503,32 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                     return Column(
                       children: [
                         if (pinnedDocs.isNotEmpty)
-                          _buildPinnedBanner(pinnedDocs.first.data() as Map<String, dynamic>),
-                          
+                          _buildPinnedBanner(
+                            pinnedDocs.first.data() as Map<String, dynamic>,
+                          ),
+
                         Expanded(
                           child: ListView.builder(
                             controller: _scrollController,
                             reverse: true,
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
-                            itemCount: docs.length,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 20,
+                            ),
+                            itemCount: docs.length + localOnlyMessages.length,
                             itemBuilder: (context, index) {
-                              final data = docs[index].data() as Map<String, dynamic>;
-                              
-                              final message = ChatMessage()
-                                ..firestoreId = docs[index].id
-                                ..roomId = data['roomId'] ?? ''
-                                ..senderId = data['senderId'] ?? ''
-                                ..senderName = data['senderName'] ?? ''
-                                ..text = data['text'] ?? ''
-                                ..mediaType = data['mediaType'] ?? 'text'
-                                ..mediaUrl = data['mediaUrl'] ?? ''
-                                ..status = data['status'] ?? 'sent'
-                                ..timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now()
-                                ..replyToMessageId = data['replyToMessageId'] ?? ''
-                                ..replyToSenderName = data['replyToSenderName'] ?? ''
-                                ..replyToMediaType = data['replyToMediaType'] ?? 'text'
-                                ..replyToText = data['replyToText'] ?? ''
-                                ..isPinned = data['isPinned'] ?? false;
+                              final ChatMessage message;
+                              if (index >= docs.length) {
+                                message = localOnlyMessages[index - docs.length];
+                              } else {
+                                message = ChatMessage.fromFirestore(
+                                  docs[index],
+                                  widget.roomId,
+                                );
+                              }
 
-                              final isMine = message.senderId == widget.currentUser.id;
+                              final isMine =
+                                  message.senderId == widget.currentUser.id;
 
                               return MessageBubble(
                                 message: message,
@@ -1295,9 +1537,13 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                                   setState(() => _replyingTo = msg);
                                   _messageFocusNode.requestFocus();
                                 },
-                                onRetry: isMine && message.status == MessageStatus.failed
-                                  ? (msg) => retryUpload(msg)
-                                  : null,
+                                onRetry:
+                                    isMine &&
+                                        message.status == MessageStatus.failed
+                                    ? (ChatMessage failedMessage) {
+                                        unawaited(retryUpload(failedMessage));
+                                      }
+                                    : null,
                               );
                             },
                           ),
@@ -1311,14 +1557,23 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
               if (_replyingTo != null)
                 Container(
                   margin: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(16),
                     boxShadow: [
-                      BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 8, offset: const Offset(0, 2))
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.06),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
                     ],
-                    border: const Border(right: BorderSide(color: Color(0xFF5B6CFF), width: 5)),
+                    border: const Border(
+                      right: BorderSide(color: Color(0xFF5B6CFF), width: 5),
+                    ),
                   ),
                   child: Row(
                     children: [
@@ -1329,22 +1584,38 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                           children: [
                             Text(
                               'الرد على ${_replyingTo!.senderName}',
-                              style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF5B6CFF), fontSize: 13),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF5B6CFF),
+                                fontSize: 13,
+                              ),
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              _replyingTo!.text.isNotEmpty ? _replyingTo!.text : 'مرفق',
+                              _replyingTo!.text.isNotEmpty
+                                  ? _replyingTo!.text
+                                  : 'مرفق',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Colors.black54, fontSize: 13),
+                              style: const TextStyle(
+                                color: Colors.black54,
+                                fontSize: 13,
+                              ),
                             ),
                           ],
                         ),
                       ),
                       Container(
-                        decoration: BoxDecoration(color: Colors.grey.shade100, shape: BoxShape.circle),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          shape: BoxShape.circle,
+                        ),
                         child: IconButton(
-                          icon: const Icon(Icons.close_rounded, size: 20, color: Colors.black54),
+                          icon: const Icon(
+                            Icons.close_rounded,
+                            size: 20,
+                            color: Colors.black54,
+                          ),
                           onPressed: _clearReply,
                         ),
                       ),
@@ -1353,11 +1624,20 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                 ),
 
               Container(
-                padding: const EdgeInsets.only(left: 8, right: 8, top: 8, bottom: 12),
+                padding: const EdgeInsets.only(
+                  left: 8,
+                  right: 8,
+                  top: 8,
+                  bottom: 12,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   boxShadow: [
-                    BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 15, offset: const Offset(0, -5)),
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.04),
+                      blurRadius: 15,
+                      offset: const Offset(0, -5),
+                    ),
                   ],
                 ),
                 child: Row(
@@ -1366,16 +1646,20 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                     Expanded(
                       child: Container(
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF0F2F5), 
+                          color: const Color(0xFFF0F2F5),
                           borderRadius: BorderRadius.circular(30),
-                          border: Border.all(color: Colors.grey.withOpacity(0.1)),
+                          border: Border.all(
+                            color: Colors.grey.withOpacity(0.1),
+                          ),
                         ),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             IconButton(
                               icon: Icon(
-                                _showEmojiPicker ? Icons.keyboard_rounded : Icons.emoji_emotions_outlined,
+                                _showEmojiPicker
+                                    ? Icons.keyboard_rounded
+                                    : Icons.emoji_emotions_outlined,
                                 color: Colors.grey[600],
                               ),
                               onPressed: _toggleEmojiPicker,
@@ -1384,7 +1668,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                               padding: EdgeInsets.zero,
                               constraints: const BoxConstraints(),
                               icon: Icon(
-                                _showStickerPicker ? Icons.keyboard_rounded : Icons.sticky_note_2_outlined,
+                                _showStickerPicker
+                                    ? Icons.keyboard_rounded
+                                    : Icons.sticky_note_2_outlined,
                                 color: Colors.grey[600],
                               ),
                               onPressed: _toggleStickerPicker,
@@ -1398,17 +1684,28 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                                 minLines: 1,
                                 style: const TextStyle(fontSize: 15),
                                 decoration: InputDecoration(
-                                  hintText: _isRecording ? 'جاري التسجيل...' : 'اكتب رسالة...',
-                                  hintStyle: TextStyle(color: Colors.grey.shade500),
+                                  hintText: _isRecording
+                                      ? 'جاري التسجيل...'
+                                      : 'اكتب رسالة...',
+                                  hintStyle: TextStyle(
+                                    color: Colors.grey.shade500,
+                                  ),
                                   border: InputBorder.none,
-                                  contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
                                 ),
                                 readOnly: _isRecording,
                               ),
                             ),
                             IconButton(
-                              icon: const Icon(Icons.attach_file_rounded, color: Colors.grey),
-                              onPressed: _showAttachmentBottomSheet,
+                              icon: const Icon(
+                                Icons.attach_file_rounded,
+                                color: Colors.grey,
+                              ),
+                              onPressed: _mediaUploadActive
+                                  ? null
+                                  : _showAttachmentBottomSheet,
                             ),
                           ],
                         ),
@@ -1434,23 +1731,30 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                         padding: const EdgeInsets.all(13),
                         decoration: BoxDecoration(
                           color: _isTextEmpty
-                              ? (_isRecording ? Colors.redAccent : const Color(0xFF2EC7A5))
+                              ? (_isRecording
+                                    ? Colors.redAccent
+                                    : const Color(0xFF2EC7A5))
                               : const Color(0xFF5B6CFF),
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: (_isTextEmpty
-                                      ? (_isRecording ? Colors.redAccent : const Color(0xFF2EC7A5))
-                                      : const Color(0xFF5B6CFF))
-                                  .withOpacity(0.3),
+                              color:
+                                  (_isTextEmpty
+                                          ? (_isRecording
+                                                ? Colors.redAccent
+                                                : const Color(0xFF2EC7A5))
+                                          : const Color(0xFF5B6CFF))
+                                      .withOpacity(0.3),
                               blurRadius: 8,
                               offset: const Offset(0, 3),
-                            )
+                            ),
                           ],
                         ),
                         child: Icon(
                           _isTextEmpty
-                              ? (_isRecording ? Icons.stop_rounded : Icons.mic_rounded)
+                              ? (_isRecording
+                                    ? Icons.stop_rounded
+                                    : Icons.mic_rounded)
                               : Icons.send_rounded,
                           color: Colors.white,
                           size: 24,
@@ -1462,14 +1766,12 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
               ),
 
               if (_showEmojiPicker)
-                EmojiPicker(
-                  onEmojiSelected: _handleEmojiSelected,
-                ),
+                EmojiPicker(onEmojiSelected: _handleEmojiSelected),
               if (_showStickerPicker)
                 StickerPicker(
                   onStickerSelected: (dynamic sticker) async {
                     if (sticker is String) {
-                       await _sendStickerMessage(sticker);
+                      await _sendStickerMessage(sticker);
                     }
                   },
                 ),

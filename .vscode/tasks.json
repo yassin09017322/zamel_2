@@ -42,6 +42,21 @@
 			},
 			"isBackground": false,
 			"problemMatcher": []
+		},
+		{
+			"label": "Run Flutter app runtime verification",
+			"type": "shell",
+			"command": "flutter run -d chrome",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Build Flutter APK debug verification",
+			"type": "shell",
+			"command": "flutter build apk --debug",
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
 		}
 	]
 }
