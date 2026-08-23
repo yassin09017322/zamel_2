@@ -54,6 +54,10 @@ class ChatMessage {
   String uploadErrorReason = ''; // Error message if upload failed
   int uploadedBytes = 0; // Bytes uploaded so far
   DateTime uploadStartedAt = DateTime.fromMillisecondsSinceEpoch(0); // When upload started
+  
+  // 🔥 السطر الجديد الذي تمت إضافته للاحتفاظ بمسار الملف محلياً عند فشل الرفع
+  String? localFilePath; 
+
   bool isEdited = false;
   bool isDisappearing = false;
   int disappearingDurationSeconds = 0;
@@ -111,7 +115,8 @@ class ChatMessage {
       ..uploadProgress = 0.0
       ..uploadErrorReason = ''
       ..uploadedBytes = 0
-      ..uploadStartedAt = DateTime.fromMillisecondsSinceEpoch(0);
+      ..uploadStartedAt = DateTime.fromMillisecondsSinceEpoch(0)
+      ..localFilePath = null; // لا يأتي من الفايرستور
 
     return message;
   }
@@ -161,6 +166,7 @@ class ChatMessage {
       json['uploadStartedAt'],
       fallback: DateTime.fromMillisecondsSinceEpoch(0),
     );
+    message.localFilePath = json['localFilePath'] as String?; // 🔥 قراءة المسار المحلي
     return message;
   }
 
@@ -195,6 +201,7 @@ class ChatMessage {
       'uploadErrorReason': uploadErrorReason,
       'uploadedBytes': uploadedBytes,
       'uploadStartedAt': uploadStartedAt.toUtc().toIso8601String(),
+      'localFilePath': localFilePath, // 🔥 حفظ المسار محلياً
     };
   }
 
@@ -229,6 +236,7 @@ class ChatMessage {
       },
       'createdAt': Timestamp.fromDate(timestamp),
       'timestamp': Timestamp.fromDate(timestamp),
+      // ⚠️ لاحظ أنه لم يتم إضافة localFilePath هنا لأنه لا يجب رفعه للفايرستور
     };
   }
 

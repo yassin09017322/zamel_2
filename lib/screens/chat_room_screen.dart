@@ -76,6 +76,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   String? _otherUserId;
   String? _otherUserName;
   String? _lastVisibleMessagesHash;
+  // 🔥 سيتم استخدامها للويب فقط، أما الموبايل سيعتمد على localFilePath
   final Map<String, XFile> _failedMediaFiles = {};
   final Map<String, ChatMessage> _localMediaMessages = {};
   final Set<StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
@@ -147,11 +148,19 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
   Future<void> retryUpload(ChatMessage failedMessage) async {
     if (_mediaUploadActive) return;
-    final localFile = _failedMediaFiles[failedMessage.firestoreId];
+    
+    // 🔥 التعديل الجذري هنا: قراءة الملف من المسار المحلي أولاً للموبايل
+    XFile? localFile;
+    if (!kIsWeb && failedMessage.localFilePath != null && failedMessage.localFilePath!.isNotEmpty) {
+      localFile = XFile(failedMessage.localFilePath!);
+    } else {
+      localFile = _failedMediaFiles[failedMessage.firestoreId]; // للويب أو كخطة بديلة
+    }
+
     if (localFile == null || failedMessage.status != MessageStatus.failed) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('لا يمكن إعادة محاولة هذه الرسالة')),
+          const SnackBar(content: Text('عذراً، لا يمكن العثور على الملف المحلي لإعادة الرفع')),
         );
       }
       return;
@@ -516,6 +525,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       ..status = MessageStatus.pending
       ..uploadProgress = 0.0
       ..uploadStartedAt = DateTime.now()
+      ..localFilePath = (!kIsWeb && uploadFile != null) ? uploadFile.path : '' // 🔥 التعديل الجذري هنا
       ..replyToMessageId = _replyingTo?.firestoreId ?? ''
       ..replyToSenderName = _replyingTo?.senderName ?? ''
       ..replyToMediaType = _replyingTo?.mediaType ?? ChatMessageType.text

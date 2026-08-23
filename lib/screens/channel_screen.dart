@@ -34,6 +34,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
   
   bool _isPublishing = false;
   bool _isRecording = false;
+  double _uploadProgress = 0.0; // 🔥 متغير جديد لمتابعة نسبة الرفع بدقة
 
   @override
   void dispose() {
@@ -79,28 +80,51 @@ class _ChannelScreenState extends State<ChannelScreen> {
 
       if (shouldSend != true) return;
       
-      setState(() => _isPublishing = true);
+      setState(() {
+        _isPublishing = true;
+        _uploadProgress = 0.0;
+      });
+
       String uploadedUrl = '';
+      String finalMediaType = 'audio';
+
       if (kIsWeb) {
         final res = await _audioService.uploadAudioFile(path);
         if (res != null) uploadedUrl = res['url'] as String;
       } else {
-        // 🔥 التعديل الجذري للصوتيات: استخدام XFile بدل File
+        // 🔥 استخدام XFile مع دعم مؤشر الرفع للصوتيات
         final localXFile = XFile(path);
-        final uploadResult = await _mediaService.uploadXFileWithResult(localXFile, isVideo: false);
+        final uploadResult = await _mediaService.uploadXFileWithResult(
+          localXFile, 
+          isVideo: false,
+          onProgress: (progress) {
+            if (mounted) setState(() => _uploadProgress = progress.percentComplete);
+          },
+        );
         if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
           throw Exception(uploadResult.error ?? 'فشل رفع التسجيل الصوتي');
         }
         uploadedUrl = uploadResult.url!;
+        finalMediaType = uploadResult.detectedFileType ?? finalMediaType;
       }
 
       if (uploadedUrl.isNotEmpty) {
-        await _channelService.publishMessage(channelId: widget.channelId, senderId: currentUserId, senderName: currentUserName, text: '🎤 مقطع صوتي', mediaUrl: uploadedUrl, mediaType: 'audio');
+        await _channelService.publishMessage(
+          channelId: widget.channelId, 
+          senderId: currentUserId, 
+          senderName: currentUserName, 
+          text: '🎤 مقطع صوتي', 
+          mediaUrl: uploadedUrl, 
+          mediaType: finalMediaType,
+        );
       }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل الإرسال: $e')));
     } finally {
-      if (mounted) setState(() => _isPublishing = false);
+      if (mounted) setState(() {
+        _isPublishing = false;
+        _uploadProgress = 0.0;
+      });
     }
   }
 
@@ -350,7 +374,18 @@ class _ChannelScreenState extends State<ChannelScreen> {
               ),
               child: IconButton(
                 onPressed: _isPublishing ? null : () => _publishTextMessage(currentUser),
-                icon: const Icon(Icons.send_rounded, color: Colors.white),
+                // 🔥 التعديل الجمالي لدعم عرض شريط التحميل بوضوح للمستخدم
+                icon: _isPublishing
+                    ? SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          value: _uploadProgress > 0 ? _uploadProgress : null,
+                          color: Colors.white,
+                          strokeWidth: 2.5,
+                        ),
+                      )
+                    : const Icon(Icons.send_rounded, color: Colors.white),
               ),
             )
           else
@@ -397,7 +432,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(vertical: 12),
                         ),
-                        readOnly: _isRecording || !canPost,
+                        readOnly: _isRecording || !canPost || _isPublishing,
                       ),
                     ),
                   ),
@@ -1106,35 +1141,70 @@ class _ChannelScreenState extends State<ChannelScreen> {
     }
   }
 
-  // 🔥 التعديل الجذري للصور والملفات والفيديوهات
+  // 🔥 التعديل الجذري والعميق المتوافق 100% مع MediaService
   Future<void> _pickAndPublishMedia(BuildContext context, String currentUserId, {bool isVideo = false}) async {
     final result = await FilePicker.platform.pickFiles(type: isVideo ? FileType.video : FileType.image, allowCompression: true, withData: kIsWeb);
     if (result == null || result.files.isEmpty) return;
 
     final file = result.files.first;
 
-    setState(() => _isPublishing = true);
+    setState(() {
+      _isPublishing = true;
+      _uploadProgress = 0.0;
+    });
+
     try {
       String uploadedUrl = '';
+      String finalMediaType = isVideo ? 'video' : 'image'; 
+      
       if (kIsWeb && file.bytes != null) {
-        uploadedUrl = await _mediaService.uploadBytes(file.bytes!, file.name, isVideo: isVideo);
+        // ✅ رفع الويب مع دعم Progress واكتشاف النوع التلقائي
+        final uploadResult = await _mediaService.uploadBytesWithResultAndProgress(
+          file.bytes!, 
+          file.name, 
+          isVideo: isVideo,
+          onProgress: (progress) {
+            if (mounted) setState(() => _uploadProgress = progress.percentComplete);
+          }
+        );
+        
+        if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
+          throw Exception(uploadResult.error ?? 'فشل الرفع');
+        }
+        uploadedUrl = uploadResult.url!;
+        finalMediaType = uploadResult.detectedFileType ?? finalMediaType;
+
       } else if (file.path != null) {
-        // 🔥 السحر هنا: استخدام XFile ودالة أطياف لتجاوز أي قيود أندرويد
+        // ✅ رفع الموبايل باستخدام XFile مع مؤشر الرفع والاستفادة من ذكاء الخدمة
         final localXFile = XFile(file.path!);
-        final uploadResult = await _mediaService.uploadXFileWithResult(localXFile, isVideo: isVideo);
+        final uploadResult = await _mediaService.uploadXFileWithResult(
+          localXFile, 
+          isVideo: isVideo,
+          onProgress: (progress) {
+            if (mounted) setState(() => _uploadProgress = progress.percentComplete);
+          }
+        );
         
         if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
           throw Exception(uploadResult.error ?? 'فشل الرفع عبر المحرك');
         }
         uploadedUrl = uploadResult.url!;
+        finalMediaType = uploadResult.detectedFileType ?? finalMediaType;
+        
       } else {
         throw Exception('لا يوجد مسار للملف');
       }
 
+      // ✅ النشر النهائي في القناة
       await _channelService.publishMessage(
-        channelId: widget.channelId, senderId: currentUserId, senderName: context.read<AuthProvider>().currentUser?.username ?? 'admin',
-        text: _textController.text.trim(), mediaUrl: uploadedUrl, mediaType: isVideo ? 'video' : 'image',
+        channelId: widget.channelId, 
+        senderId: currentUserId, 
+        senderName: context.read<AuthProvider>().currentUser?.username ?? 'admin',
+        text: _textController.text.trim(), 
+        mediaUrl: uploadedUrl, 
+        mediaType: finalMediaType, // 🔥 استخدام النوع الحقيقي المكتشف
       );
+      
       _textController.clear();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نشر المحتوى بنجاح')));
@@ -1142,7 +1212,10 @@ class _ChannelScreenState extends State<ChannelScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل رفع المحتوى: $error')));
     } finally {
-      if (mounted) setState(() => _isPublishing = false);
+      if (mounted) setState(() {
+        _isPublishing = false;
+        _uploadProgress = 0.0;
+      });
     }
   }
 }
