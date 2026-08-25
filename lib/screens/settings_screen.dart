@@ -22,10 +22,7 @@ class SettingsScreen extends StatelessWidget {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(l10n.settingsTitle),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: Text(l10n.settingsTitle), centerTitle: true),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -43,20 +40,19 @@ class SettingsScreen extends StatelessWidget {
                 title: Text(l10n.settingsLanguage),
                 subtitle: Text(l10n.settingsLanguageSubtitle),
                 trailing: DropdownButton<String>(
-                  value: settingsProvider.locale.languageCode,
+                  value: context.locale.languageCode,
                   items: const [
                     DropdownMenuItem(value: 'ar', child: Text('العربية')),
                     DropdownMenuItem(value: 'en', child: Text('English')),
                     DropdownMenuItem(value: 'fr', child: Text('Français')),
-                    DropdownMenuItem(value: 'de', child: Text('Deutsch')),
                     DropdownMenuItem(value: 'es', child: Text('Español')),
                     DropdownMenuItem(value: 'tr', child: Text('Türkçe')),
                   ],
                   onChanged: (value) async {
                     if (value != null) {
-                      await settingsProvider.setLanguage(value);
                       if (context.mounted) {
-                        context.setLocale(Locale(value));
+                        await context.setLocale(Locale(value));
+                        await settingsProvider.setLanguage(value);
                       }
                     }
                   },
@@ -81,38 +77,41 @@ class SettingsScreen extends StatelessWidget {
                   final seenIds = <String>{};
                   final options = <CategoryModel>[];
 
-                  final defaultModes = [
-                    'all',
-                    'general',
-                    'study',
-                    'culture',
-                    'sports',
-                    'entertainment',
-                    'work',
-                  ];
-
-                  for (final mode in defaultModes) {
-                    if (!seenIds.contains(mode)) {
-                      seenIds.add(mode);
-                      options.add(CategoryModel(id: mode));
-                    }
-                  }
+                  seenIds.add('all');
+                  options.add(CategoryModel(id: 'all'));
 
                   for (final category in categories) {
-                    final normalizedId = SettingsProvider.normalizeFeedMode(category.id);
-                    if (normalizedId.isEmpty || seenIds.contains(normalizedId)) continue;
-                    seenIds.add(normalizedId);
-                    options.add(CategoryModel(id: normalizedId));
+                    final normalizedId = SettingsProvider.normalizeFeedMode(
+                      category.id,
+                    );
+                    if (normalizedId == 'all' || category.id.trim().isEmpty)
+                      continue;
+                    final optionKey = category.id.trim().toLowerCase();
+                    if (seenIds.contains(optionKey)) continue;
+                    seenIds.add(optionKey);
+                    options.add(CategoryModel(id: category.id.trim()));
                   }
 
-                  final selectedMode = SettingsProvider.normalizeFeedMode(settingsProvider.feedMode);
+                  final selectedMode = SettingsProvider.normalizeFeedMode(
+                    settingsProvider.feedMode,
+                  );
+                  final resolvedSelectedMode = selectedMode == 'all'
+                      ? 'all'
+                      : SettingsProvider.resolveCategoryIdForFeedMode(
+                              selectedMode,
+                              categories.map((category) => category.id),
+                            ) ??
+                            'all';
 
                   return ListTile(
                     leading: const Icon(Icons.filter_list),
                     title: Text('feed_mode'.tr()),
-                    subtitle: Text(selectedMode.tr()),
+                    subtitle: Text(resolvedSelectedMode.tr()),
                     trailing: DropdownButton<String>(
-                      value: options.any((item) => item.id == selectedMode) ? selectedMode : 'all',
+                      value:
+                          options.any((item) => item.id == resolvedSelectedMode)
+                          ? resolvedSelectedMode
+                          : 'all',
                       items: options.map((item) {
                         return DropdownMenuItem<String>(
                           value: item.id,
@@ -200,7 +199,11 @@ class SettingsScreen extends StatelessWidget {
                 await settingsProvider.setFeedMode('all');
                 if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('تم مسح آخر فئة مختارة والعودة للوضع العام')),
+                    const SnackBar(
+                      content: Text(
+                        'تم مسح آخر فئة مختارة والعودة للوضع العام',
+                      ),
+                    ),
                   );
                 }
               },
@@ -236,7 +239,9 @@ class _SettingsSection extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: Text(
                 title,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
             ),
             ...children,

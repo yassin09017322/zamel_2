@@ -7,14 +7,13 @@ import 'message_status_indicator.dart';
 // removed unused import
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:video_player/video_player.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 
 import '../models/chat_message.dart';
 import '../screens/profile_screen.dart';
 import '../services/audio_playback_service.dart';
 import '../services/chat_service.dart';
+import '../services/chat_media_storage_service.dart';
 
 class MessageBubble extends StatelessWidget {
   final ChatMessage message;
@@ -34,124 +33,190 @@ class MessageBubble extends StatelessWidget {
     final options = <Widget>[];
 
     if (isMine) {
-      options.add(ListTile(
-        leading: const Icon(Icons.edit_outlined, color: Color(0xFF5B6CFF)),
-        title: const Text('تعديل الرسالة'),
-        onTap: () async {
-          Navigator.pop(context);
-          final controller = TextEditingController(text: message.text);
-          final updated = await showDialog<String>(
-            context: context,
-            builder: (dialogContext) => AlertDialog(
-              title: const Text('تعديل الرسالة'),
-              content: TextField(
-                controller: controller,
-                autofocus: true,
-                maxLines: 4,
-                decoration: const InputDecoration(hintText: 'اكتب الرسالة الجديدة'),
-              ),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
-                  child: const Text('حفظ'),
+      options.add(
+        ListTile(
+          leading: const Icon(Icons.edit_outlined, color: Color(0xFF5B6CFF)),
+          title: const Text('تعديل الرسالة'),
+          onTap: () async {
+            Navigator.pop(context);
+            final controller = TextEditingController(text: message.text);
+            final updated = await showDialog<String>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                title: const Text('تعديل الرسالة'),
+                content: TextField(
+                  controller: controller,
+                  autofocus: true,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    hintText: 'اكتب الرسالة الجديدة',
+                  ),
                 ),
-              ],
-            ),
-          );
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('إلغاء'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () =>
+                        Navigator.pop(dialogContext, controller.text.trim()),
+                    child: const Text('حفظ'),
+                  ),
+                ],
+              ),
+            );
 
-          if (updated != null && updated.trim().isNotEmpty) {
-            await ChatService().updateMessage(roomId: message.roomId, messageId: message.firestoreId, newText: updated.trim());
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تعديل الرسالة')));
+            if (updated != null && updated.trim().isNotEmpty) {
+              await ChatService().updateMessage(
+                roomId: message.roomId,
+                messageId: message.firestoreId,
+                newText: updated.trim(),
+              );
+              if (context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('تم تعديل الرسالة')),
+                );
+              }
             }
-          }
-        },
-      ));
+          },
+        ),
+      );
     }
 
-    options.add(ListTile(
-      leading: const Icon(Icons.share_outlined, color: Color(0xFF5B6CFF)),
-      title: const Text('مشاركة الرسالة'),
-      onTap: () async {
-        Navigator.pop(context);
-        final shareText = message.mediaType == ChatMessageType.text ? message.text : message.mediaUrl;
-        await Share.share(shareText.isNotEmpty ? shareText : 'رسالة من زامل', subject: 'مشاركة رسالة');
-      },
-    ));
+    options.add(
+      ListTile(
+        leading: const Icon(Icons.share_outlined, color: Color(0xFF5B6CFF)),
+        title: const Text('مشاركة الرسالة'),
+        onTap: () async {
+          Navigator.pop(context);
+          final shareText = message.mediaType == ChatMessageType.text
+              ? message.text
+              : message.mediaUrl;
+          await Share.share(
+            shareText.isNotEmpty ? shareText : 'رسالة من زامل',
+            subject: 'مشاركة رسالة',
+          );
+        },
+      ),
+    );
 
-    options.add(ListTile(
-      leading: Icon(message.isPinned ? Icons.push_pin : Icons.push_pin_outlined, color: const Color(0xFF5B6CFF)),
-      title: Text(message.isPinned ? 'إلغاء التثبيت' : 'تثبيت الرسالة'),
-      onTap: () async {
-        Navigator.pop(context);
-        await ChatService().pinMessage(roomId: message.roomId, messageId: message.firestoreId, pin: !message.isPinned);
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message.isPinned ? 'تم إلغاء التثبيت' : 'تم تثبيت الرسالة')));
-        }
-      },
-    ));
+    options.add(
+      ListTile(
+        leading: Icon(
+          message.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+          color: const Color(0xFF5B6CFF),
+        ),
+        title: Text(message.isPinned ? 'إلغاء التثبيت' : 'تثبيت الرسالة'),
+        onTap: () async {
+          Navigator.pop(context);
+          await ChatService().pinMessage(
+            roomId: message.roomId,
+            messageId: message.firestoreId,
+            pin: !message.isPinned,
+          );
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  message.isPinned ? 'تم إلغاء التثبيت' : 'تم تثبيت الرسالة',
+                ),
+              ),
+            );
+          }
+        },
+      ),
+    );
 
     if (isMine) {
-      options.add(ListTile(
-        leading: const Icon(Icons.delete_outline, color: Colors.red),
-        title: const Text('حذف الرسالة', style: TextStyle(color: Colors.red)),
-        onTap: () async {
-          Navigator.pop(context);
-          final confirm = await showDialog<bool>(
-            context: context,
-            builder: (dialogContext) => AlertDialog(
-              title: const Text('حذف الرسالة'),
-              content: const Text('هل تريد حذف هذه الرسالة؟'),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('إلغاء')),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: const Text('حذف', style: TextStyle(color: Colors.white)),
-                ),
-              ],
-            ),
-          );
+      options.add(
+        ListTile(
+          leading: const Icon(Icons.delete_outline, color: Colors.red),
+          title: const Text('حذف الرسالة', style: TextStyle(color: Colors.red)),
+          onTap: () async {
+            Navigator.pop(context);
+            final confirm = await showDialog<bool>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                title: const Text('حذف الرسالة'),
+                content: const Text('هل تريد حذف هذه الرسالة؟'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('إلغاء'),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                    ),
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text(
+                      'حذف',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+            );
 
-          if (confirm == true) {
-            await ChatService().deleteMessage(roomId: message.roomId, messageId: message.firestoreId);
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف الرسالة')));
+            if (confirm == true) {
+              await ChatService().deleteMessage(
+                roomId: message.roomId,
+                messageId: message.firestoreId,
+              );
+              if (context.mounted) {
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('تم حذف الرسالة')));
+              }
             }
-          }
-        },
-      ));
+          },
+        ),
+      );
     } else {
-      options.add(ListTile(
-        leading: const Icon(Icons.delete_outline, color: Colors.red),
-        title: const Text('حذف الرسالة', style: TextStyle(color: Colors.red)),
-        onTap: () async {
-          Navigator.pop(context);
-          final confirm = await showDialog<bool>(
-            context: context,
-            builder: (dialogContext) => AlertDialog(
-              title: const Text('حذف الرسالة'),
-              content: const Text('هل تريد حذف هذه الرسالة؟'),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('إلغاء')),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                  onPressed: () => Navigator.pop(dialogContext, true),
-                  child: const Text('حذف', style: TextStyle(color: Colors.white)),
-                ),
-              ],
-            ),
-          );
+      options.add(
+        ListTile(
+          leading: const Icon(Icons.delete_outline, color: Colors.red),
+          title: const Text('حذف الرسالة', style: TextStyle(color: Colors.red)),
+          onTap: () async {
+            Navigator.pop(context);
+            final confirm = await showDialog<bool>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                title: const Text('حذف الرسالة'),
+                content: const Text('هل تريد حذف هذه الرسالة؟'),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext, false),
+                    child: const Text('إلغاء'),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                    ),
+                    onPressed: () => Navigator.pop(dialogContext, true),
+                    child: const Text(
+                      'حذف',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+            );
 
-          if (confirm == true) {
-            await ChatService().deleteMessage(roomId: message.roomId, messageId: message.firestoreId);
-            if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف الرسالة')));
+            if (confirm == true) {
+              await ChatService().deleteMessage(
+                roomId: message.roomId,
+                messageId: message.firestoreId,
+              );
+              if (context.mounted) {
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('تم حذف الرسالة')));
+              }
             }
-          }
-        },
-      ));
+          },
+        ),
+      );
     }
 
     await showModalBottomSheet(
@@ -169,7 +234,10 @@ class MessageBubble extends StatelessWidget {
                   width: 48,
                   height: 5,
                   margin: const EdgeInsets.only(bottom: 8),
-                  decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(999)),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(999),
+                  ),
                 ),
                 ...options,
               ],
@@ -195,7 +263,9 @@ class MessageBubble extends StatelessWidget {
     return Align(
       alignment: align,
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.78,
+        ),
         child: GestureDetector(
           onLongPress: () => _showMessageOptions(context),
           onHorizontalDragEnd: (details) {
@@ -204,42 +274,78 @@ class MessageBubble extends StatelessWidget {
               onReply!(message);
             }
           },
-          onTap: message.mediaType == ChatMessageType.text ? () => _showMessageOptions(context) : null,
+          onTap: message.mediaType == ChatMessageType.text
+              ? () => _showMessageOptions(context)
+              : null,
           child: Container(
             margin: const EdgeInsets.symmetric(vertical: 6),
-            padding: EdgeInsets.all(message.mediaType == ChatMessageType.text ? 12 : 6),
+            padding: EdgeInsets.all(
+              message.mediaType == ChatMessageType.text ? 12 : 6,
+            ),
             decoration: BoxDecoration(color: bubbleColor, borderRadius: radius),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (message.isPinned)
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.push_pin, size: 14, color: textColor.withOpacity(0.8)),
+                        Icon(
+                          Icons.push_pin,
+                          size: 14,
+                          color: textColor.withOpacity(0.8),
+                        ),
                         const SizedBox(width: 4),
-                        Text('مثبت', style: TextStyle(fontSize: 11, color: textColor.withOpacity(0.8), fontWeight: FontWeight.w600)),
+                        Text(
+                          'مثبت',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: textColor.withOpacity(0.8),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ],
                     ),
                   ),
                 if (message.senderName.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 4,
+                    ),
                     child: GestureDetector(
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProfileScreen(userId: message.senderId))),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              ProfileScreen(userId: message.senderId),
+                        ),
+                      ),
                       child: Text(
                         message.senderName,
-                        style: TextStyle(fontSize: 12, color: textColor.withOpacity(0.8), fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: textColor.withOpacity(0.8),
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ),
 
                 if (message.replyToMessageId.isNotEmpty)
                   Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 6,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: isMine ? Colors.white24 : Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(14),
@@ -249,15 +355,24 @@ class MessageBubble extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          message.replyToSenderName.isNotEmpty ? message.replyToSenderName : 'رسالة',
-                          style: TextStyle(fontSize: 11, color: textColor.withOpacity(0.65), fontWeight: FontWeight.w700),
+                          message.replyToSenderName.isNotEmpty
+                              ? message.replyToSenderName
+                              : 'رسالة',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: textColor.withOpacity(0.65),
+                            fontWeight: FontWeight.w700,
+                          ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
                         Text(
                           _buildReplyPreviewText(message),
-                          style: TextStyle(fontSize: 13, color: textColor.withOpacity(0.8)),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: textColor.withOpacity(0.8),
+                          ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -266,9 +381,13 @@ class MessageBubble extends StatelessWidget {
                   ),
 
                 // ✅ NEW: Upload progress indicator
-                if (message.status == MessageStatus.pending && message.mediaType != ChatMessageType.text)
+                if (message.status == MessageStatus.pending &&
+                    message.mediaType != ChatMessageType.text)
                   Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 8,
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -310,10 +429,17 @@ class MessageBubble extends StatelessWidget {
                   ),
 
                 // ✅ NEW: Upload error message with retry button
-                if (message.status == MessageStatus.failed && message.uploadErrorReason.isNotEmpty)
+                if (message.status == MessageStatus.failed &&
+                    message.uploadErrorReason.isNotEmpty)
                   Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 6,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.red.withOpacity(0.15),
                       borderRadius: BorderRadius.circular(6),
@@ -361,23 +487,20 @@ class MessageBubble extends StatelessWidget {
                     ),
                   ),
 
-                if (message.mediaType == ChatMessageType.image && message.mediaUrl.isNotEmpty)
+                if (message.mediaType == ChatMessageType.image &&
+                    message.mediaUrl.isNotEmpty)
                   GestureDetector(
                     onTap: () => _openFullScreen(context),
                     child: Hero(
                       tag: message.firestoreId,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(14),
-                        child: CachedNetworkImage(
-                          imageUrl: message.mediaUrl,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => _buildPlaceholder(),
-                          errorWidget: (context, url, error) => _buildErrorHolder(),
-                        ),
+                        child: _ChatImagePreview(message: message),
                       ),
                     ),
                   )
-                else if (message.mediaType == ChatMessageType.video && message.mediaUrl.isNotEmpty)
+                else if (message.mediaType == ChatMessageType.video &&
+                    message.mediaUrl.isNotEmpty)
                   GestureDetector(
                     onTap: () => _openFullScreen(context),
                     child: Hero(
@@ -387,16 +510,26 @@ class MessageBubble extends StatelessWidget {
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
-                            Container(height: 200, width: double.infinity, color: Colors.black87),
-                            const Icon(Icons.play_circle_fill, color: Colors.white, size: 60),
+                            Container(
+                              height: 200,
+                              width: double.infinity,
+                              color: Colors.black87,
+                            ),
+                            const Icon(
+                              Icons.play_circle_fill,
+                              color: Colors.white,
+                              size: 60,
+                            ),
                           ],
                         ),
                       ),
                     ),
                   )
-                else if (message.mediaType == 'file' && message.mediaUrl.isNotEmpty)
+                else if (message.mediaType == 'file' &&
+                    message.mediaUrl.isNotEmpty)
                   _FileMessageWidget(message: message, isMine: isMine)
-                else if (message.mediaType == ChatMessageType.audio && message.mediaUrl.isNotEmpty)
+                else if (message.mediaType == ChatMessageType.audio &&
+                    message.mediaUrl.isNotEmpty)
                   _AudioMessageWidget(message: message, isMine: isMine)
                 else if (message.mediaType == ChatMessageType.call)
                   Container(
@@ -406,16 +539,27 @@ class MessageBubble extends StatelessWidget {
                       children: [
                         Icon(Icons.call, color: textColor, size: 20),
                         const SizedBox(width: 8),
-                        Text(message.text, style: TextStyle(color: textColor, fontWeight: FontWeight.w600)),
+                        Text(
+                          message.text,
+                          style: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ],
                     ),
                   )
                 else
                   GestureDetector(
-                    onTap: message.mediaType == ChatMessageType.text ? () => _showMessageOptions(context) : null,
+                    onTap: message.mediaType == ChatMessageType.text
+                        ? () => _showMessageOptions(context)
+                        : null,
                     child: Padding(
                       padding: const EdgeInsets.only(bottom: 4),
-                      child: Text(message.text.isNotEmpty ? message.text : 'رسالة', style: TextStyle(color: textColor, fontSize: 15)),
+                      child: Text(
+                        message.text.isNotEmpty ? message.text : 'رسالة',
+                        style: TextStyle(color: textColor, fontSize: 15),
+                      ),
                     ),
                   ),
 
@@ -427,29 +571,37 @@ class MessageBubble extends StatelessWidget {
                     children: [
                       Text(
                         _formatTimestamp(message.timestamp),
-                        style: TextStyle(fontSize: 11, color: textColor.withOpacity(0.7)),
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: textColor.withOpacity(0.7),
+                        ),
                       ),
                       if (isMine) ...[
-                      const SizedBox(width: 4),
-                      message.status == MessageStatus.pending
-                        ? PendingIndicator(size: 14.0, color: textColor.withOpacity(0.9))
-                        : Icon(
-                          message.status == MessageStatus.failed
-                            ? Icons.error_outline_rounded
-                            : message.status == MessageStatus.seen || message.status == 'read'
-                              ? Icons.done_all
-                              : message.status == MessageStatus.delivered
-                                ? Icons.done_all
-                                : Icons.check,
-                          size: 16,
-                          color: message.status == MessageStatus.failed
-                            ? Colors.redAccent.shade100
-                            : message.status == MessageStatus.seen || message.status == 'read'
-                              ? Colors.blueAccent.shade100
-                              : message.status == MessageStatus.delivered
-                                ? Colors.white70
-                                : Colors.white54,
-                          ),
+                        const SizedBox(width: 4),
+                        message.status == MessageStatus.pending
+                            ? PendingIndicator(
+                                size: 14.0,
+                                color: textColor.withOpacity(0.9),
+                              )
+                            : Icon(
+                                message.status == MessageStatus.failed
+                                    ? Icons.error_outline_rounded
+                                    : message.status == MessageStatus.seen ||
+                                          message.status == 'read'
+                                    ? Icons.done_all
+                                    : message.status == MessageStatus.delivered
+                                    ? Icons.done_all
+                                    : Icons.check,
+                                size: 16,
+                                color: message.status == MessageStatus.failed
+                                    ? Colors.redAccent.shade100
+                                    : message.status == MessageStatus.seen ||
+                                          message.status == 'read'
+                                    ? Colors.blueAccent.shade100
+                                    : message.status == MessageStatus.delivered
+                                    ? Colors.white70
+                                    : Colors.white54,
+                              ),
                       ],
                     ],
                   ),
@@ -463,20 +615,39 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget _buildPlaceholder() {
-    return Container(height: 200, width: double.infinity, color: Colors.black12, child: const Center(child: CircularProgressIndicator(strokeWidth: 2)));
+    return Container(
+      height: 200,
+      width: double.infinity,
+      color: Colors.black12,
+      child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+    );
   }
 
   Widget _buildErrorHolder() {
-    return Container(height: 200, width: double.infinity, color: Colors.black12, child: const Center(child: Icon(Icons.broken_image, size: 40, color: Colors.grey)));
+    return Container(
+      height: 200,
+      width: double.infinity,
+      color: Colors.black12,
+      child: const Center(
+        child: Icon(Icons.broken_image, size: 40, color: Colors.grey),
+      ),
+    );
   }
 
   void _openFullScreen(BuildContext context) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => _FullScreenMediaScreen(message: message, isMine: isMine)));
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) =>
+            _FullScreenMediaScreen(message: message, isMine: isMine),
+      ),
+    );
   }
 
   String _buildReplyPreviewText(ChatMessage message) {
     if (message.replyToMediaType == ChatMessageType.text) {
-      return message.replyToText.isNotEmpty ? message.replyToText : 'رسالة نصية';
+      return message.replyToText.isNotEmpty
+          ? message.replyToText
+          : 'رسالة نصية';
     }
     if (message.replyToMediaType == ChatMessageType.image) return 'صورة';
     if (message.replyToMediaType == ChatMessageType.video) return 'فيديو';
@@ -495,6 +666,64 @@ class MessageBubble extends StatelessWidget {
   }
 }
 
+class _ChatImagePreview extends StatefulWidget {
+  final ChatMessage message;
+
+  const _ChatImagePreview({required this.message});
+
+  @override
+  State<_ChatImagePreview> createState() => _ChatImagePreviewState();
+}
+
+class _ChatImagePreviewState extends State<_ChatImagePreview> {
+  String? _localPath;
+  final ChatMediaStorageService _mediaStorage = ChatMediaStorageService();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLocalPath();
+  }
+
+  Future<void> _loadLocalPath() async {
+    final path = await _mediaStorage.getExistingPath(widget.message);
+    if (mounted && path != null) setState(() => _localPath = path);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_localPath == null) {
+      return CachedNetworkImage(
+        imageUrl: widget.message.mediaUrl,
+        fit: BoxFit.cover,
+        placeholder: (context, url) => _buildPlaceholder(),
+        errorWidget: (context, url, error) => _buildErrorHolder(),
+      );
+    }
+    return Image.file(File(_localPath!) as dynamic, fit: BoxFit.cover);
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      height: 200,
+      width: double.infinity,
+      color: Colors.black12,
+      child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+    );
+  }
+
+  Widget _buildErrorHolder() {
+    return Container(
+      height: 200,
+      width: double.infinity,
+      color: Colors.black12,
+      child: const Center(
+        child: Icon(Icons.broken_image, size: 40, color: Colors.grey),
+      ),
+    );
+  }
+}
+
 class _FullScreenMediaScreen extends StatefulWidget {
   final ChatMessage message;
   final bool isMine;
@@ -507,16 +736,76 @@ class _FullScreenMediaScreen extends StatefulWidget {
 
 class _FullScreenMediaScreenState extends State<_FullScreenMediaScreen> {
   VideoPlayerController? _videoController;
+  String? _localPath;
+  String? _mediaError;
+  bool _isLoadingMedia = true;
+  final ChatMediaStorageService _mediaStorage = ChatMediaStorageService();
 
   @override
   void initState() {
     super.initState();
-    if (widget.message.mediaType == ChatMessageType.video) {
-      _videoController = VideoPlayerController.networkUrl(Uri.parse(widget.message.mediaUrl))
-        ..initialize().then((_) {
-          setState(() {});
-          _videoController!.play();
+    _loadMedia();
+  }
+
+  Future<void> _loadMedia() async {
+    if (kIsWeb) {
+      if (widget.message.mediaType == ChatMessageType.video) {
+        final controller = VideoPlayerController.networkUrl(
+          Uri.parse(widget.message.mediaUrl),
+        );
+        try {
+          await controller.initialize();
+          if (!mounted) {
+            await controller.dispose();
+            return;
+          }
+          _videoController = controller;
+          setState(() => _isLoadingMedia = false);
+          await controller.play();
+        } catch (error) {
+          await controller.dispose();
+          if (mounted) {
+            setState(() {
+              _mediaError = error.toString();
+              _isLoadingMedia = false;
+            });
+          }
+        }
+      } else if (mounted) {
+        setState(() => _isLoadingMedia = false);
+      }
+      return;
+    }
+    try {
+      final path = await _mediaStorage.download(message: widget.message);
+      if (path == null || path.isEmpty)
+        throw Exception('لم يتم حفظ الوسائط محليًا');
+      if (widget.message.mediaType == ChatMessageType.video) {
+        final controller = VideoPlayerController.file(File(path) as dynamic);
+        await controller.initialize();
+        if (!mounted) {
+          await controller.dispose();
+          return;
+        }
+        _videoController = controller;
+        setState(() {
+          _localPath = path;
+          _isLoadingMedia = false;
         });
+        await controller.play();
+      } else if (mounted) {
+        setState(() {
+          _localPath = path;
+          _isLoadingMedia = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _mediaError = error.toString();
+          _isLoadingMedia = false;
+        });
+      }
     }
   }
 
@@ -530,17 +819,27 @@ class _FullScreenMediaScreenState extends State<_FullScreenMediaScreen> {
     final context = this.context;
     try {
       if (action == 'share') {
-        await Share.share(widget.message.mediaUrl, subject: 'مشاركة ملف من زامل');
+        await Share.share(
+          widget.message.mediaUrl,
+          subject: 'مشاركة ملف من زامل',
+        );
       } else if (action == 'save') {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري الحفظ...')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('جاري الحفظ...')));
       } else if (action == 'delete') {
         final confirm = await showDialog<bool>(
           context: context,
           builder: (c) => AlertDialog(
             title: const Text('حذف الرسالة'),
-            content: const Text('هل أنت متأكد من حذف هذه الرسالة؟ سيتم مسحها من السيرفر تماماً.'),
+            content: const Text(
+              'هل أنت متأكد من حذف هذه الرسالة؟ سيتم مسحها من السيرفر تماماً.',
+            ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')),
+              TextButton(
+                onPressed: () => Navigator.pop(c, false),
+                child: const Text('إلغاء'),
+              ),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
                 onPressed: () => Navigator.pop(c, true),
@@ -553,10 +852,14 @@ class _FullScreenMediaScreenState extends State<_FullScreenMediaScreen> {
         if (confirm == true && context.mounted) {
           // حذف الملف من Storage فقط عندما يكون الرابط صالحاً لـ Firebase Storage.
           if (widget.message.mediaUrl.isNotEmpty &&
-              (widget.message.mediaUrl.contains('firebasestorage.googleapis.com') ||
-               widget.message.mediaUrl.startsWith('gs://'))) {
+              (widget.message.mediaUrl.contains(
+                    'firebasestorage.googleapis.com',
+                  ) ||
+                  widget.message.mediaUrl.startsWith('gs://'))) {
             try {
-              await FirebaseStorage.instance.refFromURL(widget.message.mediaUrl).delete();
+              await FirebaseStorage.instance
+                  .refFromURL(widget.message.mediaUrl)
+                  .delete();
             } catch (e) {
               debugPrint('Storage delete error: $e');
             }
@@ -565,12 +868,15 @@ class _FullScreenMediaScreenState extends State<_FullScreenMediaScreen> {
             roomId: widget.message.roomId,
             messageId: widget.message.firestoreId,
           );
-              
+
           if (context.mounted) Navigator.pop(context);
         }
       }
     } catch (e) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('حدث خطأ أثناء تنفيذ العملية')));
+      if (context.mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('حدث خطأ أثناء تنفيذ العملية')),
+        );
     }
   }
 
@@ -589,10 +895,37 @@ class _FullScreenMediaScreenState extends State<_FullScreenMediaScreen> {
             icon: const Icon(Icons.more_vert, color: Colors.white),
             onSelected: _handleAction,
             itemBuilder: (BuildContext context) => [
-              const PopupMenuItem(value: 'save', child: Row(children: [Icon(Icons.download), SizedBox(width: 8), Text('حفظ')])),
-              const PopupMenuItem(value: 'share', child: Row(children: [Icon(Icons.share), SizedBox(width: 8), Text('مشاركة')])),
+              const PopupMenuItem(
+                value: 'save',
+                child: Row(
+                  children: [
+                    Icon(Icons.download),
+                    SizedBox(width: 8),
+                    Text('حفظ'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'share',
+                child: Row(
+                  children: [
+                    Icon(Icons.share),
+                    SizedBox(width: 8),
+                    Text('مشاركة'),
+                  ],
+                ),
+              ),
               if (widget.isMine)
-                const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete, color: Colors.red), SizedBox(width: 8), Text('حذف', style: TextStyle(color: Colors.red))])),
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('حذف', style: TextStyle(color: Colors.red)),
+                    ],
+                  ),
+                ),
             ],
           ),
         ],
@@ -602,36 +935,77 @@ class _FullScreenMediaScreenState extends State<_FullScreenMediaScreen> {
         child: Hero(
           tag: widget.message.firestoreId,
           child: isVideo
-              ? (_videoController != null && _videoController!.value.isInitialized)
-                  ? AspectRatio(
-                      aspectRatio: _videoController!.value.aspectRatio,
-                      child: Stack(
-                        alignment: Alignment.bottomCenter,
-                        children: [
-                          VideoPlayer(_videoController!),
-                          VideoProgressIndicator(_videoController!, allowScrubbing: true, colors: const VideoProgressColors(playedColor: Color(0xFF5B6CFF))),
-                          Center(
-                            child: IconButton(
-                              iconSize: 64,
-                              icon: Icon(_videoController!.value.isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled, color: Colors.white.withOpacity(0.8)),
-                              onPressed: () => setState(() { _videoController!.value.isPlaying ? _videoController!.pause() : _videoController!.play(); }),
+              ? _isLoadingMedia
+                    ? const CircularProgressIndicator()
+                    : _mediaError != null
+                    ? Text(
+                        'الفيديو غير محفوظ على الجهاز\n$_mediaError',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Colors.white),
+                      )
+                    : (_videoController != null &&
+                          _videoController!.value.isInitialized)
+                    ? AspectRatio(
+                        aspectRatio: _videoController!.value.aspectRatio,
+                        child: Stack(
+                          alignment: Alignment.bottomCenter,
+                          children: [
+                            VideoPlayer(_videoController!),
+                            VideoProgressIndicator(
+                              _videoController!,
+                              allowScrubbing: true,
+                              colors: const VideoProgressColors(
+                                playedColor: Color(0xFF5B6CFF),
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : const CircularProgressIndicator()
+                            Center(
+                              child: IconButton(
+                                iconSize: 64,
+                                icon: Icon(
+                                  _videoController!.value.isPlaying
+                                      ? Icons.pause_circle_filled
+                                      : Icons.play_circle_filled,
+                                  color: Colors.white.withOpacity(0.8),
+                                ),
+                                onPressed: () => setState(() {
+                                  _videoController!.value.isPlaying
+                                      ? _videoController!.pause()
+                                      : _videoController!.play();
+                                }),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : const Text(
+                        'تعذر فتح الفيديو',
+                        style: TextStyle(color: Colors.white),
+                      )
               : InteractiveViewer(
                   panEnabled: true,
                   minScale: 0.5,
                   maxScale: 4,
-                  child: CachedNetworkImage(
-                    imageUrl: widget.message.mediaUrl,
-                    fit: BoxFit.contain,
-                    width: double.infinity,
-                    height: double.infinity,
-                    placeholder: (context, url) => const CircularProgressIndicator(),
-                  ),
+                  child: _isLoadingMedia
+                      ? const CircularProgressIndicator()
+                      : _mediaError != null
+                      ? Text(
+                          'الوسائط غير محفوظة على الجهاز\n$_mediaError',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white),
+                        )
+                      : kIsWeb
+                      ? CachedNetworkImage(
+                          imageUrl: widget.message.mediaUrl,
+                          fit: BoxFit.contain,
+                          width: double.infinity,
+                          height: double.infinity,
+                        )
+                      : Image.file(
+                          File(_localPath!) as dynamic,
+                          fit: BoxFit.contain,
+                          width: double.infinity,
+                          height: double.infinity,
+                        ),
                 ),
         ),
       ),
@@ -651,33 +1025,37 @@ class _FileMessageWidget extends StatefulWidget {
 
 class _FileMessageWidgetState extends State<_FileMessageWidget> {
   bool _isDownloading = false;
+  final ChatMediaStorageService _mediaStorage = ChatMediaStorageService();
 
   Future<void> _downloadAndOpenFile() async {
     if (kIsWeb) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تنزيل الملفات غير مدعوم على الويب')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تنزيل الملفات غير مدعوم على الويب')),
+        );
       }
       return;
     }
 
     setState(() => _isDownloading = true);
     try {
-      final dir = await getTemporaryDirectory();
-      String fileName = widget.message.mediaUrl.split('?').first.split('/').last;
-      if (!fileName.contains('.')) fileName = 'document_${DateTime.now().millisecondsSinceEpoch}.pdf';
-      
-      final dynamic file = File('${dir.path}/$fileName');
-      if (!await (file as dynamic).exists()) {
-        final response = await http.get(Uri.parse(widget.message.mediaUrl));
-        await (file as dynamic).writeAsBytes(response.bodyBytes);
+      final localPath = await _mediaStorage.download(message: widget.message);
+      if (localPath == null || localPath.isEmpty) {
+        throw Exception('الملف غير محفوظ على الجهاز');
       }
-
-      final result = await OpenFilex.open(file.path);
+      final result = await OpenFilex.open(localPath);
       if (result.type != ResultType.done && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('لا يوجد تطبيق لفتح هذا الملف: ${result.message}')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('لا يوجد تطبيق لفتح هذا الملف: ${result.message}'),
+          ),
+        );
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فشل تحميل الملف، تحقق من الإنترنت')));
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('فشل تحميل الملف، تحقق من الإنترنت')),
+        );
     } finally {
       if (mounted) setState(() => _isDownloading = false);
     }
@@ -691,7 +1069,9 @@ class _FileMessageWidgetState extends State<_FileMessageWidget> {
       child: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: widget.isMine ? Colors.white.withOpacity(0.2) : Colors.black.withOpacity(0.05),
+          color: widget.isMine
+              ? Colors.white.withOpacity(0.2)
+              : Colors.black.withOpacity(0.05),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
@@ -699,19 +1079,44 @@ class _FileMessageWidgetState extends State<_FileMessageWidget> {
           children: [
             Container(
               padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: widget.isMine ? Colors.white24 : Colors.white, shape: BoxShape.circle),
-              child: _isDownloading 
-                  ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.blueAccent))
-                  : Icon(Icons.insert_drive_file, color: widget.isMine ? Colors.white : Colors.blueAccent, size: 24),
+              decoration: BoxDecoration(
+                color: widget.isMine ? Colors.white24 : Colors.white,
+                shape: BoxShape.circle,
+              ),
+              child: _isDownloading
+                  ? const SizedBox(
+                      height: 24,
+                      width: 24,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.blueAccent,
+                      ),
+                    )
+                  : Icon(
+                      Icons.insert_drive_file,
+                      color: widget.isMine ? Colors.white : Colors.blueAccent,
+                      size: 24,
+                    ),
             ),
             const SizedBox(width: 12),
             Flexible(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(widget.message.text, style: TextStyle(color: color, fontWeight: FontWeight.bold), maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(
+                    widget.message.text,
+                    style: TextStyle(color: color, fontWeight: FontWeight.bold),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   const SizedBox(height: 4),
-                  Text('اضغط لفتح الملف', style: TextStyle(color: color.withOpacity(0.7), fontSize: 11)),
+                  Text(
+                    'اضغط لفتح الملف',
+                    style: TextStyle(
+                      color: color.withOpacity(0.7),
+                      fontSize: 11,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -752,7 +1157,9 @@ class _AudioMessageWidgetState extends State<_AudioMessageWidget> {
     }
     try {
       // خدعة ذكية واحترافية: نستخدم مكتبة video_player الموجودة في تطبيقك لقراءة "زمن" الصوت بصمت في الخلفية
-      final controller = VideoPlayerController.networkUrl(Uri.parse(widget.message.mediaUrl));
+      final controller = VideoPlayerController.networkUrl(
+        Uri.parse(widget.message.mediaUrl),
+      );
       await controller.initialize();
       if (mounted) {
         setState(() {
@@ -780,7 +1187,8 @@ class _AudioMessageWidgetState extends State<_AudioMessageWidget> {
   }
 
   void _togglePlay() async {
-    if (_playbackService.currentUrl == widget.message.mediaUrl && _playbackService.isPlaying) {
+    if (_playbackService.currentUrl == widget.message.mediaUrl &&
+        _playbackService.isPlaying) {
       await _playbackService.pause();
     } else {
       await _playbackService.togglePlay(widget.message.mediaUrl);
@@ -794,26 +1202,32 @@ class _AudioMessageWidgetState extends State<_AudioMessageWidget> {
   @override
   Widget build(BuildContext context) {
     final color = widget.isMine ? Colors.white : Colors.black87;
-    
+
     // التحقق الدقيق مما إذا كان هذا المقطع تحديداً هو الذي يشتغل الآن في السيرفر المركزي
-    final bool isThisActive = _playbackService.currentUrl == widget.message.mediaUrl;
+    final bool isThisActive =
+        _playbackService.currentUrl == widget.message.mediaUrl;
     final bool isPlaying = isThisActive && _playbackService.isPlaying;
-    
+
     // إذا كان المقطع نشطاً، نأخذ الزمن الحقيقي من السيرفر. أما إن لم يكن، نأخذ الزمن الصامت الذي جلبناه
-    final Duration duration = (isThisActive && _playbackService.duration > Duration.zero) 
-        ? _playbackService.duration 
+    final Duration duration =
+        (isThisActive && _playbackService.duration > Duration.zero)
+        ? _playbackService.duration
         : _localDuration;
-        
-    final Duration position = isThisActive ? _playbackService.position : Duration.zero;
+
+    final Duration position = isThisActive
+        ? _playbackService.position
+        : Duration.zero;
     final double playbackRate = _playbackService.playbackRate;
 
     // حساب شكل الوقت للواجهة
     String displayTime;
     if (isThisActive && position > Duration.zero) {
-      displayTime = '${position.inMinutes}:${(position.inSeconds % 60).toString().padLeft(2, '0')}';
+      displayTime =
+          '${position.inMinutes}:${(position.inSeconds % 60).toString().padLeft(2, '0')}';
     } else {
       // يعرض الزمن الكلي قبل التشغيل (مثل 0:15)
-      displayTime = '${duration.inMinutes}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
+      displayTime =
+          '${duration.inMinutes}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
     }
 
     return Row(
@@ -822,10 +1236,22 @@ class _AudioMessageWidgetState extends State<_AudioMessageWidget> {
         GestureDetector(
           onTap: _togglePlay,
           child: CircleAvatar(
-            backgroundColor: widget.isMine ? Colors.white24 : Colors.blueAccent.withOpacity(0.1),
+            backgroundColor: widget.isMine
+                ? Colors.white24
+                : Colors.blueAccent.withOpacity(0.1),
             child: _isFetchingDuration && !isThisActive
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : Icon(isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded, color: widget.isMine ? Colors.white : Colors.blueAccent),
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Icon(
+                    isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                    color: widget.isMine ? Colors.white : Colors.blueAccent,
+                  ),
           ),
         ),
         const SizedBox(width: 8),
@@ -836,7 +1262,9 @@ class _AudioMessageWidgetState extends State<_AudioMessageWidget> {
             children: [
               SliderTheme(
                 data: SliderThemeData(
-                  thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 6,
+                  ),
                   trackHeight: 3,
                   activeTrackColor: color,
                   inactiveTrackColor: color.withOpacity(0.3),
@@ -845,8 +1273,15 @@ class _AudioMessageWidgetState extends State<_AudioMessageWidget> {
                 ),
                 child: Slider(
                   min: 0,
-                  max: duration.inSeconds.toDouble() > 0 ? duration.inSeconds.toDouble() : 1,
-                  value: position.inSeconds.toDouble().clamp(0, duration.inSeconds.toDouble() > 0 ? duration.inSeconds.toDouble() : 1),
+                  max: duration.inSeconds.toDouble() > 0
+                      ? duration.inSeconds.toDouble()
+                      : 1,
+                  value: position.inSeconds.toDouble().clamp(
+                    0,
+                    duration.inSeconds.toDouble() > 0
+                        ? duration.inSeconds.toDouble()
+                        : 1,
+                  ),
                   onChanged: (value) async {
                     if (isThisActive) {
                       final seekPosition = Duration(seconds: value.toInt());
@@ -864,11 +1299,7 @@ class _AudioMessageWidgetState extends State<_AudioMessageWidget> {
                   const Spacer(),
                   PopupMenuButton<double>(
                     tooltip: 'سرعة التشغيل',
-                    icon: Icon(
-                      Icons.speed_rounded,
-                      size: 16,
-                      color: color,
-                    ),
+                    icon: Icon(Icons.speed_rounded, size: 16, color: color),
                     onSelected: (rate) async {
                       await _setPlaybackRate(rate);
                     },

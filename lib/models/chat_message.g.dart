@@ -61,6 +61,11 @@ const ChatMessageSchema = CollectionSchema(
       id: 8,
       name: r'timestamp',
       type: IsarType.dateTime,
+    ),
+    r'localFilePath': PropertySchema(
+      id: 9,
+      name: r'localFilePath',
+      type: IsarType.string,
     )
   },
   estimateSize: _chatMessageEstimateSize,
@@ -131,6 +136,7 @@ int _chatMessageEstimateSize(
   bytesCount += 3 + object.senderName.length * 3;
   bytesCount += 3 + object.status.length * 3;
   bytesCount += 3 + object.text.length * 3;
+  bytesCount += 3 + (object.localFilePath?.length ?? 0) * 3;
   return bytesCount;
 }
 
@@ -149,6 +155,7 @@ void _chatMessageSerialize(
   writer.writeString(offsets[6], object.status);
   writer.writeString(offsets[7], object.text);
   writer.writeDateTime(offsets[8], object.timestamp);
+  writer.writeString(offsets[9], object.localFilePath);
 }
 
 ChatMessage _chatMessageDeserialize(
@@ -168,6 +175,7 @@ ChatMessage _chatMessageDeserialize(
   object.status = reader.readString(offsets[6]);
   object.text = reader.readString(offsets[7]);
   object.timestamp = reader.readDateTime(offsets[8]);
+  object.localFilePath = reader.readStringOrNull(offsets[9]);
   return object;
 }
 
@@ -196,6 +204,8 @@ P _chatMessageDeserializeProp<P>(
       return (reader.readString(offset)) as P;
     case 8:
       return (reader.readDateTime(offset)) as P;
+    case 9:
+      return (reader.readStringOrNull(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
   }

@@ -4,18 +4,26 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/post.dart';
 import '../models/app_user.dart'; // تم إضافة استدعاء موديل المستخدم
+import '../services/category_service.dart';
+import 'settings_provider.dart';
 
 class FeedProvider extends ChangeNotifier {
   final FirebaseFirestore firestore;
 
-  FeedProvider({FirebaseFirestore? firestoreInstance}) : firestore = firestoreInstance ?? FirebaseFirestore.instance;
+  FeedProvider({FirebaseFirestore? firestoreInstance})
+    : firestore = firestoreInstance ?? FirebaseFirestore.instance;
 
   // 1. خوارزمية زامل الذكية (دي الدالة اللي كانت ناقصة وجابت الخطأ)
   Stream<List<Post>> getAlgorithmicFeed(AppUser? currentUser) {
-    final query = firestore.collection('posts').orderBy('timestamp', descending: true).limit(100);
-    
+    final query = firestore
+        .collection('posts')
+        .orderBy('timestamp', descending: true)
+        .limit(100);
+
     return query.snapshots().map((snapshot) {
-      List<Post> posts = snapshot.docs.map((doc) => Post.fromFirestore(doc)).toList();
+      List<Post> posts = snapshot.docs
+          .map((doc) => Post.fromFirestore(doc))
+          .toList();
 
       // إذا لم يكن المستخدم مسجلاً، اعرض المنشورات بالترتيب العادي
       if (currentUser == null) return posts;
@@ -33,29 +41,115 @@ class FeedProvider extends ChangeNotifier {
   }
 
   static String normalizeCategoryFilter(String? categoryId) {
-    if (categoryId == null) return 'all';
-    final normalized = categoryId.trim().toLowerCase();
-    if (normalized.isEmpty || normalized == 'general') return 'all';
-    if (normalized == 'sport') return 'sports';
-    if (normalized == 'study' || normalized == 'studies') return 'study';
-    if (normalized == 'culture' || normalized == 'cultural') return 'culture';
-    if (normalized == 'entertainment' || normalized == 'fun' || normalized == 'entertain') return 'entertainment';
-    if (normalized == 'work' || normalized == 'jobs' || normalized == 'career') return 'work';
-    return normalized;
+    return SettingsProvider.normalizeFeedMode(categoryId);
   }
 
   // 2. الدالة القديمة (خليناها كاحتياط)
-  Stream<List<Post>> postsStream({String? categoryId}) {
-    final normalizedCategoryId = normalizeCategoryFilter(categoryId);
-    Query<Map<String, dynamic>> query = firestore.collection('posts').orderBy('createdAt', descending: true);
-
-    if (normalizedCategoryId.isNotEmpty && normalizedCategoryId != 'all') {
-      query = query.where('categoryId', isEqualTo: normalizedCategoryId).orderBy('createdAt', descending: true);
+  Stream<List<Post>> postsStream({
+    String? categoryId,
+    AppUser? currentUser,
+  }) async* {
+    final normalizedMode = normalizeCategoryFilter(categoryId);
+    final excludedPostIds = <String>{};
+    final reducedCategoryIds = <String>{};
+    final normalizedUserId = currentUser?.id.trim();
+    if (normalizedUserId != null && normalizedUserId.isNotEmpty) {
+      try {
+        final userSnapshot = await firestore
+            .collection('users')
+            .doc(normalizedUserId)
+            .get();
+        final userData = userSnapshot.data();
+        if (userData != null) {
+          excludedPostIds.addAll(_stringList(userData['hiddenPostIds']));
+          reducedCategoryIds.addAll(
+            _stringList(userData['reducedPostCategoryIds']),
+          );
+        }
+      } catch (_) {}
+    }
+    if (normalizedMode == 'all') {
+      yield* _postsQuery().snapshots().map(
+        (snapshot) => _postsFromSnapshot(
+          snapshot,
+          currentUser,
+          excludedPostIds,
+          reducedCategoryIds,
+        ),
+      );
+      return;
     }
 
-    return query.snapshots().map((snapshot) {
-      return snapshot.docs.map((doc) => Post.fromFirestore(doc)).toList();
-    });
+    final List<String> availableCategoryIds;
+    try {
+      final categories = await CategoryService.fetchCategories();
+      availableCategoryIds = categories.map((category) => category.id).toList();
+    } catch (_) {
+      yield const <Post>[];
+      return;
+    }
+
+    final resolvedCategoryId = SettingsProvider.resolveCategoryIdForFeedMode(
+      normalizedMode,
+      availableCategoryIds,
+    );
+    if (resolvedCategoryId == null || resolvedCategoryId.trim().isEmpty) {
+      yield const <Post>[];
+      return;
+    }
+
+    yield* _postsQuery(categoryId: resolvedCategoryId).snapshots().map(
+      (snapshot) => _postsFromSnapshot(
+        snapshot,
+        currentUser,
+        excludedPostIds,
+        reducedCategoryIds,
+      ),
+    );
+  }
+
+  Query<Map<String, dynamic>> _postsQuery({String? categoryId}) {
+    Query<Map<String, dynamic>> query = firestore.collection('posts');
+    final normalizedCategoryId = categoryId?.trim();
+    if (normalizedCategoryId != null && normalizedCategoryId.isNotEmpty) {
+      query = query.where('categoryId', isEqualTo: normalizedCategoryId);
+    }
+    return query.orderBy('timestamp', descending: true);
+  }
+
+  List<Post> _postsFromSnapshot(
+    QuerySnapshot<Map<String, dynamic>> snapshot,
+    AppUser? currentUser,
+    Set<String> excludedPostIds,
+    Set<String> reducedCategoryIds,
+  ) {
+    return snapshot.docs
+        .map(Post.fromFirestore)
+        .where((post) => _isVisibleToUser(post, currentUser))
+        .where((post) => !excludedPostIds.contains(post.id))
+        .where(
+          (post) =>
+              post.categoryId == null ||
+              !reducedCategoryIds.contains(post.categoryId),
+        )
+        .toList();
+  }
+
+  bool _isVisibleToUser(Post post, AppUser? currentUser) {
+    if (post.privacy == 'public') return true;
+    if (currentUser == null) return false;
+    if (post.userId == currentUser.id) return true;
+    if (post.privacy != 'friends') return false;
+    return currentUser.following.contains(post.userId) ||
+        currentUser.followers.contains(post.userId);
+  }
+
+  List<String> _stringList(Object? value) {
+    if (value is! List) return const <String>[];
+    return value
+        .whereType<String>()
+        .where((item) => item.trim().isNotEmpty)
+        .toList();
   }
 
   Future<String> getSavedFeedMode() async {
@@ -68,7 +162,8 @@ class FeedProvider extends ChangeNotifier {
     int score = 0;
 
     // المتابعة والأصدقاء (+50 نقطة)
-    if (currentUser.following.contains(post.userId) || post.userId == currentUser.id) {
+    if (currentUser.following.contains(post.userId) ||
+        post.userId == currentUser.id) {
       score += 50;
     }
 
@@ -83,7 +178,8 @@ class FeedProvider extends ChangeNotifier {
     }
 
     // التفاعل والتريند (+2 نقطة لكل تفاعل)
-    int totalEngagement = post.likes.length + post.commentsCount + post.reactions.length;
+    int totalEngagement =
+        post.likes.length + post.commentsCount + post.reactions.length;
     score += (totalEngagement * 2);
 
     // الزمن (خصم نقطة لكل ساعة تمر على المنشور)

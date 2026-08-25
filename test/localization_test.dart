@@ -14,5 +14,21 @@ void main() {
       final localizations = lookupAppLocalizations(const Locale('en'));
       expect(localizations.loginTitle, 'Sign in to your account');
     });
+
+    test(
+      'loads every supported runtime locale without an unsupported-locale error',
+      () {
+        for (final locale in const [
+          Locale('ar'),
+          Locale('en'),
+          Locale('fr'),
+          Locale('es'),
+          Locale('tr'),
+        ]) {
+          final localizations = lookupAppLocalizations(locale);
+          expect(localizations.localeName, locale.languageCode);
+        }
+      },
+    );
   });
 }

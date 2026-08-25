@@ -3,6 +3,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:isar/isar.dart';
 
 import '../models/chat_message.dart'; // تأكد أن هذا المسار يطابق مكان ملفك
+import '../models/story_local_cache.dart';
 
 class IsarService {
   static Isar? _isar;
@@ -14,7 +15,7 @@ class IsarService {
 
     // إذا كانت قاعدة البيانات مفتوحة مسبقاً، قم بإرجاعها
     if (_isar != null) return _isar!;
-    
+
     if (Isar.instanceNames.isNotEmpty) {
       _isar = Isar.getInstance();
       if (_isar != null) return _isar!;
@@ -22,12 +23,12 @@ class IsarService {
 
     // جلب المسار سيحدث فقط في الموبايل
     final dir = await getApplicationSupportDirectory();
-    
+
     // فتح قاعدة البيانات آمن الآن لأنه لن يعمل إلا على الموبايل
-    _isar = await Isar.open(
-      [ChatMessageSchema],
-      directory: dir.path, 
-    );
+    _isar = await Isar.open([
+      ChatMessageSchema,
+      StoryLocalCacheSchema,
+    ], directory: dir.path);
 
     return _isar;
   }

@@ -4,6 +4,31 @@ class LocalPreferencesService {
   static const _draftKey = 'draft_post';
   static const _savedPostsKey = 'saved_posts';
 
+  static String _storyMemoriesKey(String userId, int year) =>
+      'ignored_story_memories_${userId}_$year';
+
+  static Future<Set<String>> getIgnoredStoryMemoryKeys(
+    String userId,
+    int year,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(_storyMemoriesKey(userId, year)) ?? <String>[])
+        .toSet();
+  }
+
+  static Future<void> ignoreStoryMemory(
+    String userId,
+    int year,
+    String memoryKey,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = _storyMemoriesKey(userId, year);
+    final ignored = prefs.getStringList(key) ?? <String>[];
+    if (!ignored.contains(memoryKey)) {
+      await prefs.setStringList(key, [...ignored, memoryKey]);
+    }
+  }
+
   static Future<void> saveDraft({
     required String text,
     required String location,
@@ -12,13 +37,16 @@ class LocalPreferencesService {
     required bool isTemporary,
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_draftKey, {
-      'text': text,
-      'location': location,
-      'cloudUrl': cloudUrl,
-      'mediaType': mediaType,
-      'isTemporary': isTemporary.toString(),
-    }.entries.map((entry) => '${entry.key}=${entry.value}').join('|'));
+    await prefs.setString(
+      _draftKey,
+      {
+        'text': text,
+        'location': location,
+        'cloudUrl': cloudUrl,
+        'mediaType': mediaType,
+        'isTemporary': isTemporary.toString(),
+      }.entries.map((entry) => '${entry.key}=${entry.value}').join('|'),
+    );
   }
 
   static Future<Map<String, dynamic>?> loadDraft() async {
@@ -53,7 +81,10 @@ class LocalPreferencesService {
     final prefs = await SharedPreferences.getInstance();
     final current = prefs.getStringList(_savedPostsKey) ?? <String>[];
     if (current.contains(postId)) {
-      await prefs.setStringList(_savedPostsKey, current.where((id) => id != postId).toList());
+      await prefs.setStringList(
+        _savedPostsKey,
+        current.where((id) => id != postId).toList(),
+      );
     } else {
       await prefs.setStringList(_savedPostsKey, [...current, postId]);
     }

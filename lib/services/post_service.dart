@@ -3,6 +3,22 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 
 import '../models/post.dart';
+import '../services/category_service.dart';
+import '../providers/settings_provider.dart';
+
+class PostInteractionState {
+  final bool isSaved;
+  final bool isHidden;
+  final bool notificationsEnabled;
+  final bool seesFewerSimilarPosts;
+
+  const PostInteractionState({
+    this.isSaved = false,
+    this.isHidden = false,
+    this.notificationsEnabled = false,
+    this.seesFewerSimilarPosts = false,
+  });
+}
 
 class PostService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -84,6 +100,10 @@ class PostService {
   }) async {
     try {
       final trimmedText = text.trim();
+      final normalizedCategoryId = categoryId.trim();
+      if (normalizedCategoryId.isEmpty) {
+        throw Exception('لا يمكن نشر منشور بدون تصنيف صالح');
+      }
       final payload = buildMediaPayload(
         mediaType: mediaType,
         mediaData: mediaData,
@@ -119,7 +139,7 @@ class PostService {
             'mediaType': payload['mediaType'],
             'mediaData': payload['mediaData'],
             'mediaFiles': payload['mediaFiles'],
-            'categoryId': categoryId,
+            'categoryId': normalizedCategoryId,
             'timestamp': FieldValue.serverTimestamp(),
             'createdAt': FieldValue.serverTimestamp(),
             'commentsCount': 0,
@@ -138,16 +158,28 @@ class PostService {
     }
   }
 
-  static Stream<List<Post>> postsStream({String? categoryId}) {
+  static Stream<List<Post>> postsStream({String? categoryId}) async* {
     Query<Map<String, dynamic>> query = _firestore
         .collection('posts')
         .orderBy('timestamp', descending: true);
 
-    if (categoryId != null && categoryId.isNotEmpty && categoryId != 'all') {
-      query = query.where('categoryId', isEqualTo: categoryId);
+    final normalizedCategoryId = categoryId?.trim();
+    if (normalizedCategoryId != null &&
+        normalizedCategoryId.isNotEmpty &&
+        normalizedCategoryId != 'all') {
+      final categories = await CategoryService.fetchCategories();
+      final resolvedCategoryId = SettingsProvider.resolveCategoryIdForFeedMode(
+        normalizedCategoryId,
+        categories.map((category) => category.id),
+      );
+      if (resolvedCategoryId == null || resolvedCategoryId.trim().isEmpty) {
+        yield const <Post>[];
+        return;
+      }
+      query = query.where('categoryId', isEqualTo: resolvedCategoryId);
     }
 
-    return query.snapshots().map((snapshot) {
+    yield* query.snapshots().map((snapshot) {
       return snapshot.docs.map((doc) => Post.fromFirestore(doc)).toList();
     });
   }
@@ -159,6 +191,140 @@ class PostService {
       if (!snapshot.exists) return null;
       return Post.fromFirestore(snapshot);
     });
+  }
+
+  static Future<PostInteractionState> getInteractionState({
+    required String userId,
+    required Post post,
+  }) async {
+    final snapshot = await _firestore.collection('users').doc(userId).get();
+    final data = snapshot.data();
+    if (data == null) return const PostInteractionState();
+
+    final savedPostIds = _stringList(data['savedPostIds']);
+    final hiddenPostIds = _stringList(data['hiddenPostIds']);
+    final notificationPostIds = _stringList(data['postNotificationIds']);
+    final reducedCategoryIds = _stringList(data['reducedPostCategoryIds']);
+    return PostInteractionState(
+      isSaved: savedPostIds.contains(post.id),
+      isHidden: hiddenPostIds.contains(post.id),
+      notificationsEnabled: notificationPostIds.contains(post.id),
+      seesFewerSimilarPosts:
+          post.categoryId != null &&
+          reducedCategoryIds.contains(post.categoryId),
+    );
+  }
+
+  static Future<void> setSavedPost({
+    required String userId,
+    required String postId,
+    required bool saved,
+  }) async {
+    await _setUserPostListValue(
+      userId: userId,
+      field: 'savedPostIds',
+      value: postId,
+      enabled: saved,
+    );
+  }
+
+  static Future<void> setHiddenPost({
+    required String userId,
+    required String postId,
+    required bool hidden,
+  }) async {
+    await _setUserPostListValue(
+      userId: userId,
+      field: 'hiddenPostIds',
+      value: postId,
+      enabled: hidden,
+    );
+  }
+
+  static Future<void> setPostNotifications({
+    required String userId,
+    required String postId,
+    required bool enabled,
+  }) async {
+    await _setUserPostListValue(
+      userId: userId,
+      field: 'postNotificationIds',
+      value: postId,
+      enabled: enabled,
+    );
+  }
+
+  static Future<void> setFewerSimilarPosts({
+    required String userId,
+    required String categoryId,
+    required bool enabled,
+  }) async {
+    final normalizedCategoryId = categoryId.trim();
+    if (normalizedCategoryId.isEmpty) {
+      throw ArgumentError.value(categoryId, 'categoryId', 'must not be empty');
+    }
+    await _setUserPostListValue(
+      userId: userId,
+      field: 'reducedPostCategoryIds',
+      value: normalizedCategoryId,
+      enabled: enabled,
+    );
+  }
+
+  static Future<void> updatePostPrivacy({
+    required String postId,
+    required String privacy,
+  }) async {
+    const supportedPrivacy = {'public', 'friends', 'private'};
+    if (!supportedPrivacy.contains(privacy)) {
+      throw ArgumentError.value(privacy, 'privacy', 'is not supported');
+    }
+    await _firestore.collection('posts').doc(postId).update({
+      'privacy': privacy,
+    });
+  }
+
+  static Future<void> updatePostText({
+    required String postId,
+    required String text,
+  }) async {
+    final normalizedPostId = postId.trim();
+    final normalizedText = text.trim();
+    if (normalizedPostId.isEmpty || normalizedText.isEmpty) {
+      throw ArgumentError('postId and text must not be empty');
+    }
+    await _firestore.collection('posts').doc(normalizedPostId).update({
+      'text': normalizedText,
+    });
+  }
+
+  static Future<void> _setUserPostListValue({
+    required String userId,
+    required String field,
+    required String value,
+    required bool enabled,
+  }) async {
+    final normalizedUserId = userId.trim();
+    final normalizedValue = value.trim();
+    if (normalizedUserId.isEmpty || normalizedValue.isEmpty) {
+      throw ArgumentError('userId and value must not be empty');
+    }
+    await _firestore.collection('users').doc(normalizedUserId).set(
+      <String, Object?>{
+        field: enabled
+            ? FieldValue.arrayUnion([normalizedValue])
+            : FieldValue.arrayRemove([normalizedValue]),
+      },
+      SetOptions(merge: true),
+    );
+  }
+
+  static List<String> _stringList(Object? value) {
+    if (value is! List) return const <String>[];
+    return value
+        .whereType<String>()
+        .where((item) => item.trim().isNotEmpty)
+        .toList();
   }
 
   static Future<void> toggleLike({

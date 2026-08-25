@@ -68,7 +68,9 @@ Future<void> main() async {
         badge: true,
         sound: true,
       );
-      FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+      FirebaseMessaging.onBackgroundMessage(
+        _firebaseMessagingBackgroundHandler,
+      );
     }
   } catch (error, stackTrace) {
     debugPrint('Firebase initialization failed: $error');
@@ -97,6 +99,7 @@ Future<void> main() async {
         Locale('en'),
         Locale('fr'),
         Locale('es'),
+        Locale('tr'),
       ],
       fallbackLocale: const Locale('en'),
       path: 'assets/translations',
@@ -113,103 +116,110 @@ class ZamelApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<AuthProvider>(create: (_) => AuthProvider()),
-        ChangeNotifierProvider<SettingsProvider>(create: (_) => SettingsProvider()),
+        ChangeNotifierProvider<SettingsProvider>(
+          create: (_) => SettingsProvider(),
+        ),
         ChangeNotifierProvider<AtyaafProvider>(create: (_) => AtyaafProvider()),
-        ChangeNotifierProvider<EngagementProvider>(create: (_) => EngagementProvider()),
-        ChangeNotifierProvider<FeedProvider>(create: (_) => FeedProvider()), 
+        ChangeNotifierProvider<EngagementProvider>(
+          create: (_) => EngagementProvider(),
+        ),
+        ChangeNotifierProvider<FeedProvider>(create: (_) => FeedProvider()),
         Provider<LocalStorageService>(create: (_) => LocalStorageService()),
       ],
       child: PresenceTracker(
         child: Consumer<SettingsProvider>(
           builder: (context, settingsProvider, _) {
             final lightColorScheme = ColorScheme.fromSeed(
-            seedColor: const Color(0xFF5B6CFF),
-            secondary: const Color(0xFF2EC7A5),
-            tertiary: const Color(0xFFFF8A65),
-            brightness: Brightness.light,
-          );
+              seedColor: const Color(0xFF5B6CFF),
+              secondary: const Color(0xFF2EC7A5),
+              tertiary: const Color(0xFFFF8A65),
+              brightness: Brightness.light,
+            );
 
-          final darkColorScheme = ColorScheme.fromSeed(
-            seedColor: const Color(0xFF5B6CFF),
-            secondary: const Color(0xFF2EC7A5),
-            tertiary: const Color(0xFFFF8A65),
-            brightness: Brightness.dark,
-          );
+            final darkColorScheme = ColorScheme.fromSeed(
+              seedColor: const Color(0xFF5B6CFF),
+              secondary: const Color(0xFF2EC7A5),
+              tertiary: const Color(0xFFFF8A65),
+              brightness: Brightness.dark,
+            );
 
-          return MaterialApp(
-            debugShowCheckedModeBanner: false,
-            title: 'ZAMEL',
-            theme: ThemeData(
-              colorScheme: lightColorScheme,
-              scaffoldBackgroundColor: const Color(0xFFF7F8FF),
-              useMaterial3: true,
-              fontFamily: 'Segoe UI',
-              appBarTheme: const AppBarTheme(
-                elevation: 0,
-                centerTitle: true,
-                backgroundColor: Color(0xFF5B6CFF),
-                foregroundColor: Colors.white,
-              ),
-              cardTheme: const CardThemeData(
-                elevation: 2,
-                margin: EdgeInsets.zero,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(20)),
-                ),
-              ),
-              elevatedButtonTheme: ElevatedButtonThemeData(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF5B6CFF),
+            return MaterialApp(
+              debugShowCheckedModeBanner: false,
+              title: 'ZAMEL',
+              theme: ThemeData(
+                colorScheme: lightColorScheme,
+                scaffoldBackgroundColor: const Color(0xFFF7F8FF),
+                useMaterial3: true,
+                fontFamily: 'Segoe UI',
+                appBarTheme: const AppBarTheme(
+                  elevation: 0,
+                  centerTitle: true,
+                  backgroundColor: Color(0xFF5B6CFF),
                   foregroundColor: Colors.white,
+                ),
+                cardTheme: const CardThemeData(
+                  elevation: 2,
+                  margin: EdgeInsets.zero,
                   shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(20)),
+                  ),
+                ),
+                elevatedButtonTheme: ElevatedButtonThemeData(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF5B6CFF),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+                inputDecorationTheme: InputDecorationTheme(
+                  border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
                 ),
               ),
-              inputDecorationTheme: InputDecorationTheme(
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(14),
+              darkTheme: ThemeData(
+                colorScheme: darkColorScheme,
+                brightness: Brightness.dark,
+                useMaterial3: true,
+                scaffoldBackgroundColor: const Color(0xFF0F172A),
+                cardTheme: const CardThemeData(
+                  elevation: 2,
+                  margin: EdgeInsets.zero,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.all(Radius.circular(20)),
+                  ),
                 ),
               ),
-            ),
-            darkTheme: ThemeData(
-              colorScheme: darkColorScheme,
-              brightness: Brightness.dark,
-              useMaterial3: true,
-              scaffoldBackgroundColor: const Color(0xFF0F172A),
-              cardTheme: const CardThemeData(
-                elevation: 2,
-                margin: EdgeInsets.zero,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.all(Radius.circular(20)),
-                ),
-              ),
-            ),
-            themeMode: settingsProvider.darkMode ? ThemeMode.dark : ThemeMode.light,
-            localizationsDelegates: [
-              ...context.localizationDelegates,
-              AppLocalizations.delegate,
-              GlobalMaterialLocalizations.delegate,
-              GlobalWidgetsLocalizations.delegate,
-              GlobalCupertinoLocalizations.delegate,
-            ],
-            supportedLocales: context.supportedLocales,
-            locale: context.locale,
-            routes: {
-              '/login': (_) => const LoginScreen(), // تم إضافة هذا السطر فقط
-              '/admin': (_) => const AdminScreen(),
-              '/banned': (_) => const BannedScreen(),
-              '/atyaaf': (_) => const AtyaafReelsScreen(),
-              '/channels': (_) => const ChannelsScreen(),
-              '/ideas': (_) => const FeatureIdeasScreen(),
-              '/registration': (_) => const RegisterScreen(),
-              '/home': (_) => const HomeScreen(),
-            },
-            home: const AuthStateHandler(),
-          );
-        },
+              themeMode: settingsProvider.darkMode
+                  ? ThemeMode.dark
+                  : ThemeMode.light,
+              localizationsDelegates: [
+                ...context.localizationDelegates,
+                AppLocalizations.delegate,
+                GlobalMaterialLocalizations.delegate,
+                GlobalWidgetsLocalizations.delegate,
+                GlobalCupertinoLocalizations.delegate,
+              ],
+              supportedLocales: context.supportedLocales,
+              locale: context.locale,
+              routes: {
+                '/login': (_) => const LoginScreen(), // تم إضافة هذا السطر فقط
+                '/admin': (_) => const AdminScreen(),
+                '/banned': (_) => const BannedScreen(),
+                '/atyaaf': (_) => const AtyaafReelsScreen(),
+                '/channels': (_) => const ChannelsScreen(),
+                '/ideas': (_) => const FeatureIdeasScreen(),
+                '/registration': (_) => const RegisterScreen(),
+                '/home': (_) => const HomeScreen(),
+              },
+              home: const AuthStateHandler(),
+            );
+          },
+        ),
       ),
-    ));
+    );
   }
 }
 
@@ -221,7 +231,8 @@ class PresenceTracker extends StatefulWidget {
   State<PresenceTracker> createState() => _PresenceTrackerState();
 }
 
-class _PresenceTrackerState extends State<PresenceTracker> with WidgetsBindingObserver {
+class _PresenceTrackerState extends State<PresenceTracker>
+    with WidgetsBindingObserver {
   bool _hasInitializedPresence = false;
 
   @override
@@ -247,7 +258,9 @@ class _PresenceTrackerState extends State<PresenceTracker> with WidgetsBindingOb
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed) {
       _updatePresence(online: true);
-    } else if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+    } else if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
       _updatePresence(online: false);
     }
   }

@@ -16,7 +16,7 @@ class ChatSyncRepository {
 
   Future<void> start() async {
     final isar = await IsarService.init();
-    
+
     // الإضافة السحرية الأولى: لو Isar غير متاح (مثلاً في الويب)، أوقف عملية المزامنة المحلية تماماً
     if (isar == null) return;
 
@@ -26,43 +26,53 @@ class ChatSyncRepository {
         .collection('messages')
         .orderBy('timestamp', descending: false)
         .snapshots()
-        .listen((snapshot) async {
-      final messages = snapshot.docs.map((doc) => ChatMessage.fromFirestore(doc, roomId)).toList();
-      final syncedIds = messages.map((message) => message.firestoreId).toSet();
+        .listen(
+          (snapshot) async {
+            final messages = snapshot.docs
+                .map((doc) => ChatMessage.fromFirestore(doc, roomId))
+                .toList();
+            final syncedIds = messages
+                .map((message) => message.firestoreId)
+                .toSet();
 
-      // هنا Isar مضمون إنه موجود لأننا عملنا شرط الحماية فوق
-      await isar.writeTxn(() async {
-        final localMessages = await isar.chatMessages
-            .where()
-            .roomIdEqualTo(roomId)
-            .findAll();
+            // هنا Isar مضمون إنه موجود لأننا عملنا شرط الحماية فوق
+            await isar.writeTxn(() async {
+              final localMessages = await isar.chatMessages
+                  .where()
+                  .roomIdEqualTo(roomId)
+                  .findAll();
 
-        for (final localMessage in localMessages) {
-          final isLocalPending = localMessage.firestoreId.startsWith('local_') || localMessage.status == MessageStatus.pending;
+              for (final localMessage in localMessages) {
+                final isLocalPending =
+                    localMessage.firestoreId.startsWith('local_') ||
+                    localMessage.status == MessageStatus.pending;
 
-          if (!isLocalPending &&
-              localMessage.firestoreId.isNotEmpty &&
-              !syncedIds.contains(localMessage.firestoreId)) {
-            await isar.chatMessages.delete(localMessage.id);
-          }
-        }
+                if (!isLocalPending &&
+                    localMessage.firestoreId.isNotEmpty &&
+                    !syncedIds.contains(localMessage.firestoreId)) {
+                  await isar.chatMessages.delete(localMessage.id);
+                }
+              }
 
-        for (final message in messages) {
-          final existing = await isar.chatMessages
-              .filter()
-              .firestoreIdEqualTo(message.firestoreId)
-              .roomIdEqualTo(roomId)
-              .findFirst();
+              for (final message in messages) {
+                final existing = await isar.chatMessages
+                    .filter()
+                    .firestoreIdEqualTo(message.firestoreId)
+                    .roomIdEqualTo(roomId)
+                    .findFirst();
 
-          if (existing != null) {
-            message.id = existing.id;
-          }
-          await isar.chatMessages.put(message);
-        }
-      });
-    }, onError: (error) {
-      // Logging can be added here.
-    });
+                if (existing != null) {
+                  message.id = existing.id;
+                  message.localFilePath = existing.localFilePath;
+                }
+                await isar.chatMessages.put(message);
+              }
+            });
+          },
+          onError: (error) {
+            // Logging can be added here.
+          },
+        );
   }
 
   Future<void> stop() async {

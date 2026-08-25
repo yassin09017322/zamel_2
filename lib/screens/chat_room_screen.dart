@@ -22,6 +22,7 @@ import '../services/audio_service.dart';
 import '../services/call_service.dart';
 import '../services/chat_service.dart';
 import '../services/chat_sync_repository.dart';
+import '../services/chat_media_storage_service.dart';
 import '../services/media_service.dart';
 import '../services/isar_service.dart';
 import '../screens/call_screen.dart';
@@ -47,6 +48,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   final ImagePicker _imagePicker = ImagePicker();
   final AudioCommentService _audioService = AudioCommentService();
   final MediaService _mediaService = MediaService();
+  final ChatMediaStorageService _chatMediaStorage = ChatMediaStorageService();
 
   ChatSyncRepository? _chatSyncRepository;
   final ScrollController _scrollController = ScrollController();
@@ -80,7 +82,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   final Map<String, XFile> _failedMediaFiles = {};
   final Map<String, ChatMessage> _localMediaMessages = {};
   final Set<StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>>
-      _messageCommitSubscriptions = {};
+  _messageCommitSubscriptions = {};
 
   @override
   void initState() {
@@ -148,19 +150,26 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
 
   Future<void> retryUpload(ChatMessage failedMessage) async {
     if (_mediaUploadActive) return;
-    
+
     // 🔥 التعديل الجذري هنا: قراءة الملف من المسار المحلي أولاً للموبايل
     XFile? localFile;
-    if (!kIsWeb && failedMessage.localFilePath != null && failedMessage.localFilePath!.isNotEmpty) {
+    if (!kIsWeb &&
+        failedMessage.localFilePath != null &&
+        failedMessage.localFilePath!.isNotEmpty) {
       localFile = XFile(failedMessage.localFilePath!);
     } else {
-      localFile = _failedMediaFiles[failedMessage.firestoreId]; // للويب أو كخطة بديلة
+      localFile =
+          _failedMediaFiles[failedMessage.firestoreId]; // للويب أو كخطة بديلة
     }
 
     if (localFile == null || failedMessage.status != MessageStatus.failed) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('عذراً، لا يمكن العثور على الملف المحلي لإعادة الرفع')),
+          const SnackBar(
+            content: Text(
+              'عذراً، لا يمكن العثور على الملف المحلي لإعادة الرفع',
+            ),
+          ),
         );
       }
       return;
@@ -223,6 +232,14 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         replyToMediaType: failedMessage.replyToMediaType,
         replyToText: failedMessage.replyToText,
       );
+
+      if (!kIsWeb) {
+        final localPath = await _chatMediaStorage.saveXFile(
+          source: localFile,
+          message: failedMessage,
+        );
+        if (localPath != null) failedMessage.localFilePath = localPath;
+      }
 
       await _updateLocalMessageStatus(
         failedMessage.firestoreId,
@@ -525,7 +542,9 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       ..status = MessageStatus.pending
       ..uploadProgress = 0.0
       ..uploadStartedAt = DateTime.now()
-      ..localFilePath = (!kIsWeb && uploadFile != null) ? uploadFile.path : '' // 🔥 التعديل الجذري هنا
+      ..localFilePath = (!kIsWeb && uploadFile != null)
+          ? uploadFile.path
+          : '' // 🔥 التعديل الجذري هنا
       ..replyToMessageId = _replyingTo?.firestoreId ?? ''
       ..replyToSenderName = _replyingTo?.senderName ?? ''
       ..replyToMediaType = _replyingTo?.mediaType ?? ChatMessageType.text
@@ -612,6 +631,21 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         replyToMediaType: localMessage.replyToMediaType,
         replyToText: localMessage.replyToText,
       );
+
+      if (!kIsWeb) {
+        try {
+          final localPath = await _chatMediaStorage.saveXFile(
+            source: uploadFile,
+            message: localMessage,
+          );
+          if (localPath != null) {
+            localMessage.localFilePath = localPath;
+            await _saveLocalMessage(localMessage);
+          }
+        } catch (error) {
+          debugPrint('Local media save error: $error');
+        }
+      }
 
       await _updateLocalMessageStatus(
         tempMessageId,
@@ -1452,8 +1486,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                     }
 
                     if (!snapshot.hasData ||
-                      (snapshot.data!.docs.isEmpty &&
-                        _localMediaMessages.isEmpty)) {
+                        (snapshot.data!.docs.isEmpty &&
+                            _localMediaMessages.isEmpty)) {
                       return Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
@@ -1493,18 +1527,17 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                       );
                     }
 
-                    final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs =
-                      snapshot.data!.docs;
+                    final List<QueryDocumentSnapshot<Map<String, dynamic>>>
+                    docs = snapshot.data!.docs;
                     final firestoreIds = docs.map((doc) => doc.id).toSet();
-                    final localOnlyMessages = _localMediaMessages.values
-                        .where(
-                          (message) =>
-                              !firestoreIds.contains(message.firestoreId),
-                        )
-                        .toList()
-                      ..sort(
-                        (a, b) => b.timestamp.compareTo(a.timestamp),
-                      );
+                    final localOnlyMessages =
+                        _localMediaMessages.values
+                            .where(
+                              (message) =>
+                                  !firestoreIds.contains(message.firestoreId),
+                            )
+                            .toList()
+                          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
                     final pinnedDocs = docs.where((d) {
                       final data = d.data() as Map<String, dynamic>;
                       return data['isPinned'] == true;
@@ -1529,7 +1562,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                             itemBuilder: (context, index) {
                               final ChatMessage message;
                               if (index >= docs.length) {
-                                message = localOnlyMessages[index - docs.length];
+                                message =
+                                    localOnlyMessages[index - docs.length];
                               } else {
                                 message = ChatMessage.fromFirestore(
                                   docs[index],

@@ -1,6 +1,7 @@
 import 'dart:async'; // تم إضافتها لعداد تسجيل الصوت
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/comment.dart';
@@ -10,7 +11,6 @@ import '../screens/post_detail_screen.dart';
 import '../screens/profile_screen.dart';
 import '../services/audio_service.dart';
 import '../services/comment_service.dart';
-import '../services/local_preferences_service.dart';
 import '../services/post_service.dart';
 import 'media_preview.dart';
 
@@ -23,20 +23,30 @@ class PostCard extends StatefulWidget {
   State<PostCard> createState() => _PostCardState();
 }
 
-class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin {
+class _PostCardState extends State<PostCard>
+    with SingleTickerProviderStateMixin {
   bool _isSaved = false;
+  bool _isHidden = false;
+  bool _notificationsEnabled = false;
+  bool _seesFewerSimilarPosts = false;
+  bool _isRemoved = false;
+  bool _isTextExpanded = false;
   final AudioCommentService _audioCommentService = AudioCommentService();
   String? _activeAudioUrl;
   bool _isAudioPlaying = false;
   Duration _audioPosition = Duration.zero;
   late final StreamSubscription<Duration> _audioPositionSub;
   late final StreamSubscription<PlayerState> _audioStateSub;
-  
+
   static const Map<String, Map<String, dynamic>> _zamelReactions = {
     'like': {'emoji': '👍', 'label': 'أوافق', 'color': Color(0xFF5B6CFF)},
     'love': {'emoji': '❤️', 'label': 'أبدعت', 'color': Color(0xFFE94057)},
     'haha': {'emoji': '😂', 'label': 'ضحكتني', 'color': Color(0xFFF2C94C)},
-    'spot_on': {'emoji': '🎯', 'label': 'في الصميم', 'color': Color(0xFF2EC7A5)},
+    'spot_on': {
+      'emoji': '🎯',
+      'label': 'في الصميم',
+      'color': Color(0xFF2EC7A5),
+    },
     'support': {'emoji': '🤝', 'label': 'دعم', 'color': Color(0xFF8A2387)},
   };
 
@@ -50,7 +60,9 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
     });
     _audioStateSub = _audioCommentService.playerStateStream.listen((state) {
       if (!mounted) return;
-      if (state == PlayerState.completed || state == PlayerState.stopped || state == PlayerState.paused) {
+      if (state == PlayerState.completed ||
+          state == PlayerState.stopped ||
+          state == PlayerState.paused) {
         setState(() {
           _isAudioPlaying = false;
           if (state == PlayerState.completed) {
@@ -65,17 +77,403 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
   }
 
   Future<void> _loadSavedState() async {
-    final saved = await LocalPreferencesService.isPostSaved(widget.post.id);
-    if (mounted) {
-      setState(() => _isSaved = saved);
+    final user = context.read<AuthProvider>().currentUser;
+    if (user == null) return;
+    try {
+      final state = await PostService.getInteractionState(
+        userId: user.id,
+        post: widget.post,
+      );
+      if (mounted) {
+        setState(() {
+          _isSaved = state.isSaved;
+          _isHidden = state.isHidden;
+          _notificationsEnabled = state.notificationsEnabled;
+          _seesFewerSimilarPosts = state.seesFewerSimilarPosts;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تحميل خيارات المنشور: $error')),
+        );
+      }
     }
   }
 
   Future<void> _toggleSave() async {
-    await LocalPreferencesService.toggleSavedPost(widget.post.id);
-    if (mounted) {
-      setState(() => _isSaved = !_isSaved);
+    final user = context.read<AuthProvider>().currentUser;
+    if (user == null) return;
+    final nextValue = !_isSaved;
+    try {
+      await PostService.setSavedPost(
+        userId: user.id,
+        postId: widget.post.id,
+        saved: nextValue,
+      );
+      if (mounted) setState(() => _isSaved = nextValue);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تحديث حفظ المنشور: $error')),
+        );
+      }
     }
+  }
+
+  Future<void> _toggleHidden() async {
+    final user = context.read<AuthProvider>().currentUser;
+    if (user == null) return;
+    final nextValue = !_isHidden;
+    try {
+      await PostService.setHiddenPost(
+        userId: user.id,
+        postId: widget.post.id,
+        hidden: nextValue,
+      );
+      if (mounted) setState(() => _isHidden = nextValue);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تحديث إخفاء المنشور: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleNotifications() async {
+    final user = context.read<AuthProvider>().currentUser;
+    if (user == null) return;
+    final nextValue = !_notificationsEnabled;
+    try {
+      await PostService.setPostNotifications(
+        userId: user.id,
+        postId: widget.post.id,
+        enabled: nextValue,
+      );
+      if (mounted) setState(() => _notificationsEnabled = nextValue);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تحديث إشعارات المنشور: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleFewerSimilarPosts() async {
+    final user = context.read<AuthProvider>().currentUser;
+    final categoryId = widget.post.categoryId?.trim();
+    if (user == null || categoryId == null || categoryId.isEmpty) return;
+    final nextValue = !_seesFewerSimilarPosts;
+    try {
+      await PostService.setFewerSimilarPosts(
+        userId: user.id,
+        categoryId: categoryId,
+        enabled: nextValue,
+      );
+      if (mounted) setState(() => _seesFewerSimilarPosts = nextValue);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تحديث تفضيل المنشورات: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _deletePost() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('حذف المنشور؟'),
+        content: const Text('سيتم حذف المنشور نهائيًا من Firestore.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await PostService.deletePost(postId: widget.post.id);
+      if (mounted) setState(() => _isRemoved = true);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('تعذر حذف المنشور: $error')));
+      }
+    }
+  }
+
+  Future<void> _changeAudience() async {
+    final selectedPrivacy = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('تغيير الجمهور'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'public'),
+            child: Text('عام'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'friends'),
+            child: Text('الأصدقاء / المتابعون'),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(dialogContext, 'private'),
+            child: Text('خاص / أنا فقط'),
+          ),
+        ],
+      ),
+    );
+    if (selectedPrivacy == null || selectedPrivacy == widget.post.privacy)
+      return;
+    try {
+      await PostService.updatePostPrivacy(
+        postId: widget.post.id,
+        privacy: selectedPrivacy,
+      );
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تغيير جمهور المنشور: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _showPostMenu({required bool isOwner}) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: isOwner
+              ? [
+                  ListTile(
+                    leading: const Icon(
+                      Icons.delete_outline,
+                      color: Colors.red,
+                    ),
+                    title: const Text('حذف المنشور'),
+                    onTap: () => Navigator.pop(sheetContext, 'delete'),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.notifications_none),
+                    title: Text(
+                      _notificationsEnabled
+                          ? 'إيقاف إشعارات المنشور'
+                          : 'تشغيل إشعارات المنشور',
+                    ),
+                    onTap: () => Navigator.pop(sheetContext, 'notifications'),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.people_outline),
+                    title: const Text('تغيير الجمهور'),
+                    onTap: () => Navigator.pop(sheetContext, 'audience'),
+                  ),
+                ]
+              : [
+                  ListTile(
+                    leading: Icon(
+                      _isSaved ? Icons.bookmark : Icons.bookmark_border,
+                    ),
+                    title: Text(_isSaved ? 'إلغاء حفظ المنشور' : 'حفظ المنشور'),
+                    onTap: () => Navigator.pop(sheetContext, 'save'),
+                  ),
+                  ListTile(
+                    leading: Icon(
+                      _isHidden ? Icons.visibility : Icons.visibility_off,
+                    ),
+                    title: Text(_isHidden ? 'إظهار المنشور' : 'إخفاء المنشور'),
+                    onTap: () => Navigator.pop(sheetContext, 'hide'),
+                  ),
+                  if (widget.post.categoryId?.trim().isNotEmpty == true)
+                    ListTile(
+                      leading: const Icon(Icons.remove_circle_outline),
+                      title: Text(
+                        _seesFewerSimilarPosts
+                            ? 'إلغاء تقليل المنشورات المشابهة'
+                            : 'رؤية منشورات أقل تشبه هذا',
+                      ),
+                      onTap: () => Navigator.pop(sheetContext, 'fewer'),
+                    ),
+                ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'delete':
+        await _deletePost();
+      case 'notifications':
+        await _toggleNotifications();
+      case 'audience':
+        await _changeAudience();
+      case 'save':
+        await _toggleSave();
+      case 'hide':
+        await _toggleHidden();
+      case 'fewer':
+        await _toggleFewerSimilarPosts();
+    }
+  }
+
+  bool get _isTextPost =>
+      widget.post.mediaType == 'none' && widget.post.mediaData.isEmpty;
+
+  Future<void> _copyPostText() async {
+    await Clipboard.setData(ClipboardData(text: widget.post.text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('تم نسخ نص المنشور')));
+  }
+
+  Future<void> _editPostText() async {
+    final controller = TextEditingController(text: widget.post.text);
+    final updatedText = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('تعديل المنشور'),
+        content: TextField(
+          controller: controller,
+          minLines: 3,
+          maxLines: 8,
+          autofocus: true,
+          decoration: const InputDecoration(border: OutlineInputBorder()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted || updatedText == null || updatedText == widget.post.text) {
+      return;
+    }
+    if (updatedText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا يمكن أن يكون نص المنشور فارغًا')),
+      );
+      return;
+    }
+    try {
+      await PostService.updatePostText(
+        postId: widget.post.id,
+        text: updatedText,
+      );
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('تعذر تعديل المنشور: $error')));
+      }
+    }
+  }
+
+  Future<void> _showTextPostMenu({
+    required bool isOwner,
+    required bool canExpand,
+  }) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.copy_outlined),
+              title: const Text('نسخ المنشور'),
+              onTap: () => Navigator.pop(sheetContext, 'copy'),
+            ),
+            if (canExpand)
+              ListTile(
+                leading: Icon(
+                  _isTextExpanded ? Icons.unfold_less : Icons.unfold_more,
+                ),
+                title: Text(_isTextExpanded ? 'عرض أقل' : 'عرض أكثر'),
+                onTap: () => Navigator.pop(sheetContext, 'expand'),
+              ),
+            if (isOwner)
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('تعديل المنشور'),
+                onTap: () => Navigator.pop(sheetContext, 'edit'),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'copy':
+        await _copyPostText();
+      case 'expand':
+        setState(() => _isTextExpanded = !_isTextExpanded);
+      case 'edit':
+        await _editPostText();
+    }
+  }
+
+  Widget _buildTextContent({required bool isOwner}) {
+    const textStyle = TextStyle(
+      fontSize: 15,
+      height: 1.5,
+      color: Color(0xFF2F2F2F),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final painter = TextPainter(
+          text: TextSpan(text: widget.post.text, style: textStyle),
+          textDirection: Directionality.of(context),
+          maxLines: 6,
+        )..layout(maxWidth: constraints.maxWidth);
+        final canExpand = painter.didExceedMaxLines;
+        final text = GestureDetector(
+          onLongPress: () =>
+              _showTextPostMenu(isOwner: isOwner, canExpand: canExpand),
+          child: Text(
+            widget.post.text,
+            maxLines: canExpand && !_isTextExpanded ? 6 : null,
+            overflow: canExpand && !_isTextExpanded
+                ? TextOverflow.ellipsis
+                : TextOverflow.visible,
+            style: textStyle,
+          ),
+        );
+        if (!canExpand) return text;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            text,
+            TextButton(
+              onPressed: () =>
+                  setState(() => _isTextExpanded = !_isTextExpanded),
+              child: Text(_isTextExpanded ? 'عرض أقل' : 'عرض أكثر'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _toggleAudioPlayback(Comment comment) async {
@@ -110,16 +508,18 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
         widget.post.reactions[userId] = reactionType;
       }
     });
-    
+
     try {
       await PostService.addReaction(
-        postId: widget.post.id, 
-        userId: userId, 
-        reactionType: reactionType
+        postId: widget.post.id,
+        userId: userId,
+        reactionType: reactionType,
       );
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فشل تسجيل التفاعل')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('فشل تسجيل التفاعل')));
       }
     }
   }
@@ -140,7 +540,11 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
               color: Colors.white,
               borderRadius: BorderRadius.circular(40),
               boxShadow: [
-                BoxShadow(color: Colors.black.withAlpha(38), blurRadius: 20, offset: const Offset(0, 10))
+                BoxShadow(
+                  color: Colors.black.withAlpha(38),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
+                ),
               ],
             ),
             child: Material(
@@ -159,11 +563,18 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(entry.value['emoji'], style: const TextStyle(fontSize: 32)),
+                          Text(
+                            entry.value['emoji'],
+                            style: const TextStyle(fontSize: 32),
+                          ),
                           const SizedBox(height: 4),
                           Text(
-                            entry.value['label'], 
-                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: entry.value['color'])
+                            entry.value['label'],
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: entry.value['color'],
+                            ),
                           ),
                         ],
                       ),
@@ -185,7 +596,9 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
   }
 
   Widget _buildReactionsSummary(String currentUserId) {
-    final validReactions = widget.post.reactions.values.where((r) => r != 'none').toList();
+    final validReactions = widget.post.reactions.values
+        .where((r) => r != 'none')
+        .toList();
     if (validReactions.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -197,7 +610,9 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
         .take(3)
         .toList();
 
-    bool iReacted = widget.post.reactions.containsKey(currentUserId) && widget.post.reactions[currentUserId] != 'none';
+    bool iReacted =
+        widget.post.reactions.containsKey(currentUserId) &&
+        widget.post.reactions[currentUserId] != 'none';
     int count = validReactions.length;
 
     String text = '';
@@ -212,13 +627,27 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
     return Row(
       children: [
         Row(
-          children: uniqueEmojis.map((e) => Padding(
-            padding: const EdgeInsets.only(left: 2),
-            child: Text(e.toString(), style: const TextStyle(fontSize: 16)),
-          )).toList(),
+          children: uniqueEmojis
+              .map(
+                (e) => Padding(
+                  padding: const EdgeInsets.only(left: 2),
+                  child: Text(
+                    e.toString(),
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                ),
+              )
+              .toList(),
         ),
         const SizedBox(width: 6),
-        Text(text, style: const TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold)),
+        Text(
+          text,
+          style: const TextStyle(
+            color: Colors.grey,
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ],
     );
   }
@@ -227,25 +656,36 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
   Widget build(BuildContext context) {
     final currentUser = context.watch<AuthProvider>().currentUser;
     final String currentUserId = currentUser?.id ?? '';
-    
+    if (_isHidden || _isRemoved) return const SizedBox.shrink();
+
     String? myReaction;
-    if (widget.post.reactions.containsKey(currentUserId) && widget.post.reactions[currentUserId] != 'none') {
+    if (widget.post.reactions.containsKey(currentUserId) &&
+        widget.post.reactions[currentUserId] != 'none') {
       myReaction = widget.post.reactions[currentUserId];
     }
 
-    final reactionData = myReaction != null && _zamelReactions.containsKey(myReaction) 
-        ? _zamelReactions[myReaction]! 
+    final reactionData =
+        myReaction != null && _zamelReactions.containsKey(myReaction)
+        ? _zamelReactions[myReaction]!
         : null;
 
     return GestureDetector(
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PostDetailScreen(postId: widget.post.id))),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PostDetailScreen(postId: widget.post.id),
+        ),
+      ),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
-            BoxShadow(color: Colors.black.withAlpha(15), blurRadius: 12, offset: const Offset(0, 6)),
+            BoxShadow(
+              color: Colors.black.withAlpha(15),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
           ],
         ),
         child: Padding(
@@ -261,8 +701,14 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                     radius: 22,
                     backgroundColor: const Color(0xFF5B6CFF),
                     child: Text(
-                      widget.post.username.isNotEmpty ? widget.post.username[0].toUpperCase() : 'م',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
+                      widget.post.username.isNotEmpty
+                          ? widget.post.username[0].toUpperCase()
+                          : 'م',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 18,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -271,36 +717,90 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         GestureDetector(
-                          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProfileScreen(userId: widget.post.userId))),
-                          child: Text(widget.post.username, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  ProfileScreen(userId: widget.post.userId),
+                            ),
+                          ),
+                          child: Text(
+                            widget.post.username,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                            ),
+                          ),
                         ),
                         if (widget.post.location.isNotEmpty)
                           Row(
                             children: [
-                              const Icon(Icons.location_on, size: 12, color: Color(0xFF2EC7A5)),
+                              const Icon(
+                                Icons.location_on,
+                                size: 12,
+                                color: Color(0xFF2EC7A5),
+                              ),
                               const SizedBox(width: 2),
-                              Text(widget.post.location, style: const TextStyle(color: Color(0xFF2EC7A5), fontSize: 12, fontWeight: FontWeight.bold)),
+                              Text(
+                                widget.post.location,
+                                style: const TextStyle(
+                                  color: Color(0xFF2EC7A5),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ],
                           ),
-                        Text(_formatTimestamp(widget.post.timestamp), style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                        Text(
+                          _formatTimestamp(widget.post.timestamp),
+                          style: const TextStyle(
+                            color: Colors.grey,
+                            fontSize: 12,
+                          ),
+                        ),
                       ],
                     ),
                   ),
                   Icon(
-                    widget.post.privacy == 'private' ? Icons.lock : 
-                    widget.post.privacy == 'friends' ? Icons.group : Icons.public,
-                    size: 16, color: Colors.grey,
+                    widget.post.privacy == 'private'
+                        ? Icons.lock
+                        : widget.post.privacy == 'friends'
+                        ? Icons.group
+                        : Icons.public,
+                    size: 16,
+                    color: Colors.grey,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.more_horiz),
+                    tooltip: 'خيارات المنشور',
+                    onPressed: currentUser == null
+                        ? null
+                        : () => _showPostMenu(
+                            isOwner: currentUser.id == widget.post.userId,
+                          ),
                   ),
                 ],
               ),
               const SizedBox(height: 12),
-              
-              Text(widget.post.text, style: const TextStyle(fontSize: 15, height: 1.5, color: Color(0xFF2F2F2F))),
-              
+
+              if (_isTextPost)
+                _buildTextContent(
+                  isOwner: currentUser?.id == widget.post.userId,
+                )
+              else
+                Text(
+                  widget.post.text,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    height: 1.5,
+                    color: Color(0xFF2F2F2F),
+                  ),
+                ),
+
               if (widget.post.mediaFiles.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 _buildMediaGallery(widget.post.mediaFiles),
-              ] else if (widget.post.mediaType == 'image' && widget.post.mediaData.isNotEmpty) ...[
+              ] else if (widget.post.mediaType == 'image' &&
+                  widget.post.mediaData.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(18),
@@ -308,24 +808,60 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                     widget.post.mediaData,
                     width: double.infinity,
                     fit: BoxFit.cover,
-                    loadingBuilder: (ctx, child, progress) => progress == null ? child : Container(height: 200, color: Colors.grey[100], child: const Center(child: CircularProgressIndicator())),
-                    errorBuilder: (ctx, err, stack) => Container(height: 200, color: Colors.grey[100], child: const Center(child: Icon(Icons.broken_image, size: 50, color: Colors.grey))),
+                    loadingBuilder: (ctx, child, progress) => progress == null
+                        ? child
+                        : Container(
+                            height: 200,
+                            color: Colors.grey[100],
+                            child: const Center(
+                              child: CircularProgressIndicator(),
+                            ),
+                          ),
+                    errorBuilder: (ctx, err, stack) => Container(
+                      height: 200,
+                      color: Colors.grey[100],
+                      child: const Center(
+                        child: Icon(
+                          Icons.broken_image,
+                          size: 50,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              ] else if (widget.post.mediaType == 'video' && widget.post.mediaData.isNotEmpty) ...[
+              ] else if (widget.post.mediaType == 'video' &&
+                  widget.post.mediaData.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Container(
                   width: double.infinity,
                   height: 220,
-                  decoration: BoxDecoration(color: const Color(0xFF1E1E1E), borderRadius: BorderRadius.circular(18)),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E1E1E),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      const Positioned(bottom: 12, left: 12, child: Text('مقطع فيديو', style: TextStyle(color: Colors.white70, fontSize: 12))),
+                      const Positioned(
+                        bottom: 12,
+                        left: 12,
+                        child: Text(
+                          'مقطع فيديو',
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                      ),
                       Container(
                         padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(color: Colors.white.withAlpha(51), shape: BoxShape.circle),
-                        child: const Icon(Icons.play_arrow_rounded, size: 50, color: Colors.white),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withAlpha(51),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.play_arrow_rounded,
+                          size: 50,
+                          color: Colors.white,
+                        ),
                       ),
                     ],
                   ),
@@ -337,7 +873,14 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   _buildReactionsSummary(currentUserId),
-                  Text('${widget.post.commentsCount} تعليق', style: const TextStyle(color: Colors.grey, fontSize: 13, fontWeight: FontWeight.bold)),
+                  Text(
+                    '${widget.post.commentsCount} تعليق',
+                    style: const TextStyle(
+                      color: Colors.grey,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -349,13 +892,15 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                 children: <Widget>[
                   Expanded(
                     child: GestureDetector(
-                      onLongPress: () => currentUser != null ? _showZamelReactions(context, currentUserId) : null,
+                      onLongPress: () => currentUser != null
+                          ? _showZamelReactions(context, currentUserId)
+                          : null,
                       onTap: () {
                         if (currentUser == null) return;
                         if (myReaction != null) {
-                          _handleReaction(currentUserId, 'none'); 
+                          _handleReaction(currentUserId, 'none');
                         } else {
-                          _handleReaction(currentUserId, 'like'); 
+                          _handleReaction(currentUserId, 'like');
                         }
                       },
                       child: Container(
@@ -364,13 +909,17 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text(reactionData?['emoji'] ?? '🤍', style: const TextStyle(fontSize: 20)),
+                            Text(
+                              reactionData?['emoji'] ?? '🤍',
+                              style: const TextStyle(fontSize: 20),
+                            ),
                             const SizedBox(width: 6),
                             Text(
                               reactionData?['label'] ?? 'أوافق',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
-                                color: reactionData?['color'] ?? Colors.grey[600],
+                                color:
+                                    reactionData?['color'] ?? Colors.grey[600],
                               ),
                             ),
                           ],
@@ -386,9 +935,19 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.chat_bubble_outline_rounded, color: Colors.grey[600], size: 20),
+                            Icon(
+                              Icons.chat_bubble_outline_rounded,
+                              color: Colors.grey[600],
+                              size: 20,
+                            ),
                             const SizedBox(width: 6),
-                            Text('تعليق', style: TextStyle(color: Colors.grey[600], fontWeight: FontWeight.bold)),
+                            Text(
+                              'تعليق',
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -402,9 +961,25 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(_isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded, color: _isSaved ? const Color(0xFF2EC7A5) : Colors.grey[600], size: 20),
+                            Icon(
+                              _isSaved
+                                  ? Icons.bookmark_rounded
+                                  : Icons.bookmark_border_rounded,
+                              color: _isSaved
+                                  ? const Color(0xFF2EC7A5)
+                                  : Colors.grey[600],
+                              size: 20,
+                            ),
                             const SizedBox(width: 6),
-                            Text('حفظ', style: TextStyle(color: _isSaved ? const Color(0xFF2EC7A5) : Colors.grey[600], fontWeight: FontWeight.bold)),
+                            Text(
+                              'حفظ',
+                              style: TextStyle(
+                                color: _isSaved
+                                    ? const Color(0xFF2EC7A5)
+                                    : Colors.grey[600],
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -412,17 +987,29 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                   ),
                 ],
               ),
-              
+
               if (widget.post.hashtags.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Wrap(
                     spacing: 8,
-                    children: widget.post.hashtags.map((tag) => Chip(
-                      label: Text('#$tag', style: const TextStyle(fontSize: 12, color: Color(0xFF5B6CFF))),
-                      backgroundColor: const Color(0xFF5B6CFF).withAlpha(26),
-                      visualDensity: VisualDensity.compact,
-                    )).toList(),
+                    children: widget.post.hashtags
+                        .map(
+                          (tag) => Chip(
+                            label: Text(
+                              '#$tag',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Color(0xFF5B6CFF),
+                              ),
+                            ),
+                            backgroundColor: const Color(
+                              0xFF5B6CFF,
+                            ).withAlpha(26),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        )
+                        .toList(),
                   ),
                 ),
             ],
@@ -451,8 +1038,20 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
           item.url,
           width: double.infinity,
           fit: BoxFit.cover,
-          loadingBuilder: (ctx, child, progress) => progress == null ? child : Container(height: 200, color: Colors.grey[100], child: const Center(child: CircularProgressIndicator())),
-          errorBuilder: (ctx, err, stack) => Container(height: 200, color: Colors.grey[100], child: const Center(child: Icon(Icons.broken_image, size: 50, color: Colors.grey))),
+          loadingBuilder: (ctx, child, progress) => progress == null
+              ? child
+              : Container(
+                  height: 200,
+                  color: Colors.grey[100],
+                  child: const Center(child: CircularProgressIndicator()),
+                ),
+          errorBuilder: (ctx, err, stack) => Container(
+            height: 200,
+            color: Colors.grey[100],
+            child: const Center(
+              child: Icon(Icons.broken_image, size: 50, color: Colors.grey),
+            ),
+          ),
         ),
       );
     }
@@ -478,7 +1077,12 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
           child: Image.network(
             item.url,
             fit: BoxFit.cover,
-            errorBuilder: (ctx, err, stack) => Container(color: Colors.grey[100], child: const Center(child: Icon(Icons.broken_image, size: 28, color: Colors.grey))),
+            errorBuilder: (ctx, err, stack) => Container(
+              color: Colors.grey[100],
+              child: const Center(
+                child: Icon(Icons.broken_image, size: 28, color: Colors.grey),
+              ),
+            ),
           ),
         );
       },
@@ -515,27 +1119,51 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                   color: Colors.white,
                   borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
                 ),
-                padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+                padding: EdgeInsets.only(
+                  bottom: MediaQuery.of(ctx).viewInsets.bottom,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const SizedBox(height: 12),
-                    Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.grey[300],
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: Row(
                         children: [
-                          Expanded(child: Text('التعليقات', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold))),
-                          IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.of(context).pop()),
+                          Expanded(
+                            child: Text(
+                              'التعليقات',
+                              style: Theme.of(context).textTheme.titleMedium
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.of(context).pop(),
+                          ),
                         ],
                       ),
                     ),
                     if (replyToComment != null)
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.grey.shade100,
                             borderRadius: BorderRadius.circular(18),
@@ -543,11 +1171,22 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                           child: Row(
                             children: [
                               Expanded(
-                                child: Text('رد على ${replyToComment!.username}', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF5B6CFF))),
+                                child: Text(
+                                  'رد على ${replyToComment!.username}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF5B6CFF),
+                                  ),
+                                ),
                               ),
                               GestureDetector(
-                                onTap: () => setModalState(() => replyToComment = null),
-                                child: const Icon(Icons.close, size: 18, color: Colors.grey),
+                                onTap: () =>
+                                    setModalState(() => replyToComment = null),
+                                child: const Icon(
+                                  Icons.close,
+                                  size: 18,
+                                  color: Colors.grey,
+                                ),
                               ),
                             ],
                           ),
@@ -558,85 +1197,185 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                       child: StreamBuilder<List<Comment>>(
                         stream: CommentService().commentsStream(widget.post.id),
                         builder: (context, snapshot) {
-                          if (snapshot.connectionState == ConnectionState.waiting) {
-                            return const Center(child: CircularProgressIndicator(color: Color(0xFF5B6CFF)));
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(
+                                color: Color(0xFF5B6CFF),
+                              ),
+                            );
                           }
                           final comments = snapshot.data ?? [];
                           if (comments.isEmpty) {
-                            return const Center(child: Text('لا توجد تعليقات بعد. كن أول متفاعل!', style: TextStyle(color: Colors.grey)));
+                            return const Center(
+                              child: Text(
+                                'لا توجد تعليقات بعد. كن أول متفاعل!',
+                                style: TextStyle(color: Colors.grey),
+                              ),
+                            );
                           }
                           return ListView.builder(
-                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 8,
+                            ),
                             itemCount: comments.length,
                             itemBuilder: (context, index) {
                               final comment = comments[index];
-                              final isAudio = comment.type == 'audio' || comment.audioUrl.isNotEmpty || comment.text.startsWith('[AUDIO]');
-                              
+                              final isAudio =
+                                  comment.type == 'audio' ||
+                                  comment.audioUrl.isNotEmpty ||
+                                  comment.text.startsWith('[AUDIO]');
+
                               return Card(
                                 elevation: 0,
                                 color: Colors.grey[50],
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
                                 child: ListTile(
                                   leading: CircleAvatar(
                                     radius: 16,
-                                    backgroundColor: const Color(0xFF5B6CFF).withAlpha(51),
-                                    child: Text(comment.username[0].toUpperCase(), style: const TextStyle(color: Color(0xFF5B6CFF), fontSize: 14, fontWeight: FontWeight.bold)),
+                                    backgroundColor: const Color(
+                                      0xFF5B6CFF,
+                                    ).withAlpha(51),
+                                    child: Text(
+                                      comment.username[0].toUpperCase(),
+                                      style: const TextStyle(
+                                        color: Color(0xFF5B6CFF),
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
                                   ),
                                   title: GestureDetector(
-                                    onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProfileScreen(userId: comment.userId))),
-                                    child: Text(comment.username, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                    onTap: () => Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => ProfileScreen(
+                                          userId: comment.userId,
+                                        ),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      comment.username,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 14,
+                                      ),
+                                    ),
                                   ),
                                   subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       const SizedBox(height: 4),
                                       if (comment.replyToUsername.isNotEmpty)
                                         Padding(
-                                          padding: const EdgeInsets.only(bottom: 6),
-                                          child: Text('رد على ${comment.replyToUsername}', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                                          padding: const EdgeInsets.only(
+                                            bottom: 6,
+                                          ),
+                                          child: Text(
+                                            'رد على ${comment.replyToUsername}',
+                                            style: const TextStyle(
+                                              color: Colors.grey,
+                                              fontSize: 12,
+                                            ),
+                                          ),
                                         ),
                                       if (isAudio)
                                         InkWell(
                                           onTap: () async {
                                             try {
-                                              await _toggleAudioPlayback(comment);
+                                              await _toggleAudioPlayback(
+                                                comment,
+                                              );
                                             } catch (_) {
                                               if (mounted) {
-                                                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر تشغيل الصوت')));
+                                                ScaffoldMessenger.of(
+                                                  context,
+                                                ).showSnackBar(
+                                                  const SnackBar(
+                                                    content: Text(
+                                                      'تعذر تشغيل الصوت',
+                                                    ),
+                                                  ),
+                                                );
                                               }
                                             }
                                           },
                                           child: Container(
-                                            margin: const EdgeInsets.only(top: 4, bottom: 4),
-                                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                            margin: const EdgeInsets.only(
+                                              top: 4,
+                                              bottom: 4,
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 8,
+                                            ),
                                             decoration: BoxDecoration(
-                                              color: const Color(0xFF5B6CFF).withAlpha(26),
-                                              borderRadius: BorderRadius.circular(20),
+                                              color: const Color(
+                                                0xFF5B6CFF,
+                                              ).withAlpha(26),
+                                              borderRadius:
+                                                  BorderRadius.circular(20),
                                             ),
                                             child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
                                               children: [
                                                 Row(
-                                                  mainAxisSize: MainAxisSize.min,
+                                                  mainAxisSize:
+                                                      MainAxisSize.min,
                                                   children: [
                                                     Icon(
-                                                      _activeAudioUrl == comment.audioUrl && _isAudioPlaying
-                                                          ? Icons.pause_circle_filled
-                                                          : Icons.play_circle_fill,
-                                                      color: const Color(0xFF5B6CFF),
+                                                      _activeAudioUrl ==
+                                                                  comment
+                                                                      .audioUrl &&
+                                                              _isAudioPlaying
+                                                          ? Icons
+                                                                .pause_circle_filled
+                                                          : Icons
+                                                                .play_circle_fill,
+                                                      color: const Color(
+                                                        0xFF5B6CFF,
+                                                      ),
                                                       size: 30,
                                                     ),
                                                     const SizedBox(width: 8),
                                                     Expanded(
                                                       child: ClipRRect(
-                                                        borderRadius: BorderRadius.circular(999),
+                                                        borderRadius:
+                                                            BorderRadius.circular(
+                                                              999,
+                                                            ),
                                                         child: LinearProgressIndicator(
-                                                          value: _activeAudioUrl == comment.audioUrl
-                                                              ? (_audioPosition.inMilliseconds / (comment.duration > 0 ? comment.duration * 1000 : 30000)).clamp(0.0, 1.0)
+                                                          value:
+                                                              _activeAudioUrl ==
+                                                                  comment
+                                                                      .audioUrl
+                                                              ? (_audioPosition
+                                                                            .inMilliseconds /
+                                                                        (comment.duration >
+                                                                                0
+                                                                            ? comment.duration *
+                                                                                  1000
+                                                                            : 30000))
+                                                                    .clamp(
+                                                                      0.0,
+                                                                      1.0,
+                                                                    )
                                                               : 0.0,
                                                           minHeight: 6,
-                                                          backgroundColor: Colors.white,
-                                                          valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF5B6CFF)),
+                                                          backgroundColor:
+                                                              Colors.white,
+                                                          valueColor:
+                                                              const AlwaysStoppedAnimation<
+                                                                Color
+                                                              >(
+                                                                Color(
+                                                                  0xFF5B6CFF,
+                                                                ),
+                                                              ),
                                                         ),
                                                       ),
                                                     ),
@@ -644,26 +1383,57 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                                                 ),
                                                 const SizedBox(height: 6),
                                                 Text(
-                                                  _activeAudioUrl == comment.audioUrl
+                                                  _activeAudioUrl ==
+                                                          comment.audioUrl
                                                       ? '${_formatDuration(_audioPosition)} / ${_formatDuration(Duration(seconds: comment.duration > 0 ? comment.duration : 30))}'
-                                                      : (comment.duration > 0 ? '0:00 / ${_formatDuration(Duration(seconds: comment.duration))}' : '0:00 / 0:30'),
-                                                  style: const TextStyle(color: Color(0xFF5B6CFF), fontWeight: FontWeight.bold, fontSize: 12),
+                                                      : (comment.duration > 0
+                                                            ? '0:00 / ${_formatDuration(Duration(seconds: comment.duration))}'
+                                                            : '0:00 / 0:30'),
+                                                  style: const TextStyle(
+                                                    color: Color(0xFF5B6CFF),
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 12,
+                                                  ),
                                                 ),
                                               ],
                                             ),
                                           ),
                                         )
                                       else
-                                        Text(comment.text, style: const TextStyle(color: Colors.black87)),
+                                        Text(
+                                          comment.text,
+                                          style: const TextStyle(
+                                            color: Colors.black87,
+                                          ),
+                                        ),
                                       const SizedBox(height: 4),
-                                      Text(_formatCommentTime(comment.timestamp), style: const TextStyle(fontSize: 11, color: Colors.grey)),
-                                  const SizedBox(height: 2),
-                                  TextButton(
-                                    onPressed: () => setModalState(() => replyToComment = comment),
-                                    style: TextButton.styleFrom(foregroundColor: const Color(0xFF5B6CFF), padding: EdgeInsets.zero, minimumSize: const Size(50, 30), tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                                    child: const Text('رد', style: TextStyle(fontSize: 12)),
-                                  ),
-                                ],
+                                      Text(
+                                        _formatCommentTime(comment.timestamp),
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      TextButton(
+                                        onPressed: () => setModalState(
+                                          () => replyToComment = comment,
+                                        ),
+                                        style: TextButton.styleFrom(
+                                          foregroundColor: const Color(
+                                            0xFF5B6CFF,
+                                          ),
+                                          padding: EdgeInsets.zero,
+                                          minimumSize: const Size(50, 30),
+                                          tapTargetSize:
+                                              MaterialTapTargetSize.shrinkWrap,
+                                        ),
+                                        child: const Text(
+                                          'رد',
+                                          style: TextStyle(fontSize: 12),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               );
@@ -672,25 +1442,48 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                         },
                       ),
                     ),
-                    
+
                     // --- منطقة إدخال التعليق (المايك والنص) ---
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white,
-                        boxShadow: [BoxShadow(color: Colors.black.withAlpha(13), blurRadius: 10, offset: const Offset(0, -5))],
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withAlpha(13),
+                            blurRadius: 10,
+                            offset: const Offset(0, -5),
+                          ),
+                        ],
                       ),
                       child: isRecording
                           ? Row(
                               children: [
-                                const Icon(Icons.mic, color: Colors.redAccent, size: 28),
+                                const Icon(
+                                  Icons.mic,
+                                  color: Colors.redAccent,
+                                  size: 28,
+                                ),
                                 const SizedBox(width: 12),
                                 Text(
                                   'جاري التسجيل... 00:0$recordingSeconds',
-                                  style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 15),
+                                  style: const TextStyle(
+                                    color: Colors.redAccent,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                  ),
                                 ),
                                 const Spacer(),
-                                const Text('اسحب للإلغاء', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                const Text(
+                                  'اسحب للإلغاء',
+                                  style: TextStyle(
+                                    color: Colors.grey,
+                                    fontSize: 12,
+                                  ),
+                                ),
                               ],
                             )
                           : Row(
@@ -699,40 +1492,66 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                                   child: TextField(
                                     controller: commentController,
                                     onChanged: (val) {
-                                      setModalState(() => isTyping = val.trim().isNotEmpty);
+                                      setModalState(
+                                        () => isTyping = val.trim().isNotEmpty,
+                                      );
                                     },
                                     decoration: InputDecoration(
-                                      hintText: 'أضف تعليقاً كـ ${currentUser!.username}...',
+                                      hintText:
+                                          'أضف تعليقاً كـ ${currentUser!.username}...',
                                       filled: true,
                                       fillColor: Colors.grey[100],
-                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
-                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(20),
+                                        borderSide: BorderSide.none,
+                                      ),
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                            horizontal: 16,
+                                            vertical: 10,
+                                          ),
                                     ),
                                   ),
                                 ),
                                 const SizedBox(width: 10),
-                                
+
                                 // زر المايك / الإرسال التفاعلي
                                 GestureDetector(
-                                  onLongPress: isTyping ? null : () async {
-                                    final canRecord = await audioService.checkPermission();
-                                    if (!canRecord) {
-                                      if (context.mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الاذن للمكروفون مطلوب للتسجيل')));
-                                      }
-                                      return;
-                                    }
+                                  onLongPress: isTyping
+                                      ? null
+                                      : () async {
+                                          final canRecord = await audioService
+                                              .checkPermission();
+                                          if (!canRecord) {
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                    'الاذن للمكروفون مطلوب للتسجيل',
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                            return;
+                                          }
 
-                                    setModalState(() {
-                                      isRecording = true;
-                                      recordingSeconds = 0;
-                                      isCanceling = false;
-                                    });
-                                    await audioService.startRecording();
-                                    recordTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-                                      setModalState(() => recordingSeconds++);
-                                    });
-                                  },
+                                          setModalState(() {
+                                            isRecording = true;
+                                            recordingSeconds = 0;
+                                            isCanceling = false;
+                                          });
+                                          await audioService.startRecording();
+                                          recordTimer = Timer.periodic(
+                                            const Duration(seconds: 1),
+                                            (timer) {
+                                              setModalState(
+                                                () => recordingSeconds++,
+                                              );
+                                            },
+                                          );
+                                        },
                                   onLongPressCancel: () async {
                                     if (!isRecording) {
                                       return;
@@ -745,53 +1564,91 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                                       recordingSeconds = 0;
                                     });
                                     if (context.mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إلغاء التسجيل')));
-                                    }
-                                  },
-                                  onLongPressEnd: isTyping ? null : (details) async {
-                                    if (isCanceling) {
-                                      return;
-                                    }
-
-                                    recordTimer?.cancel();
-                                    setModalState(() => isRecording = false);
-
-                                    final audioPath = await audioService.stopRecording();
-                                    if (audioPath == null || audioPath.isEmpty) {
-                                      if (context.mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فشل تسجيل الصوت')));
-                                      }
-                                      return;
-                                    }
-
-                                    try {
-                                      final uploadResult = await audioService.uploadAudioFile(audioPath);
-                                      if (uploadResult == null || uploadResult['url'] == null) {
-                                        throw Exception('فشل الرفع');
-                                      }
-
-                                      await CommentService().addComment(
-                                        postId: widget.post.id,
-                                        userId: currentUser!.id,
-                                        username: currentUser!.username,
-                                        text: '[AUDIO]',
-                                        audioUrl: uploadResult['url'],
-                                        type: 'audio',
-                                        duration: audioService.durationSeconds,
-                                        replyToCommentId: replyToComment?.id,
-                                        replyToUserId: replyToComment?.userId,
-                                        replyToUsername: replyToComment?.username,
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('تم إلغاء التسجيل'),
+                                        ),
                                       );
-                                      setModalState(() => replyToComment = null);
-                                    } catch (_) {
-                                      if (context.mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فشل إرسال الصوت')));
-                                      }
                                     }
                                   },
+                                  onLongPressEnd: isTyping
+                                      ? null
+                                      : (details) async {
+                                          if (isCanceling) {
+                                            return;
+                                          }
+
+                                          recordTimer?.cancel();
+                                          setModalState(
+                                            () => isRecording = false,
+                                          );
+
+                                          final audioPath = await audioService
+                                              .stopRecording();
+                                          if (audioPath == null ||
+                                              audioPath.isEmpty) {
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                    'فشل تسجيل الصوت',
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                            return;
+                                          }
+
+                                          try {
+                                            final uploadResult =
+                                                await audioService
+                                                    .uploadAudioFile(audioPath);
+                                            if (uploadResult == null ||
+                                                uploadResult['url'] == null) {
+                                              throw Exception('فشل الرفع');
+                                            }
+
+                                            await CommentService().addComment(
+                                              postId: widget.post.id,
+                                              userId: currentUser!.id,
+                                              username: currentUser!.username,
+                                              text: '[AUDIO]',
+                                              audioUrl: uploadResult['url'],
+                                              type: 'audio',
+                                              duration:
+                                                  audioService.durationSeconds,
+                                              replyToCommentId:
+                                                  replyToComment?.id,
+                                              replyToUserId:
+                                                  replyToComment?.userId,
+                                              replyToUsername:
+                                                  replyToComment?.username,
+                                            );
+                                            setModalState(
+                                              () => replyToComment = null,
+                                            );
+                                          } catch (_) {
+                                            if (context.mounted) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                    'فشل إرسال الصوت',
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                          }
+                                        },
                                   onTap: () async {
                                     if (isTyping) {
-                                      final text = commentController.text.trim();
+                                      final text = commentController.text
+                                          .trim();
                                       if (text.isEmpty) {
                                         return;
                                       }
@@ -803,7 +1660,8 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                                           text: text,
                                           replyToCommentId: replyToComment?.id,
                                           replyToUserId: replyToComment?.userId,
-                                          replyToUsername: replyToComment?.username,
+                                          replyToUsername:
+                                              replyToComment?.username,
                                         );
                                         commentController.clear();
                                         setModalState(() {
@@ -812,26 +1670,48 @@ class _PostCardState extends State<PostCard> with SingleTickerProviderStateMixin
                                         });
                                       } catch (_) {
                                         if (context.mounted) {
-                                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فشل إرسال التعليق')));
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'فشل إرسال التعليق',
+                                              ),
+                                            ),
+                                          );
                                         }
                                       }
                                     } else {
-                                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اضغط مطولاً لتسجيل رسالة صوتية')));
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'اضغط مطولاً لتسجيل رسالة صوتية',
+                                          ),
+                                        ),
+                                      );
                                     }
                                   },
                                   child: AnimatedContainer(
                                     duration: const Duration(milliseconds: 200),
                                     padding: const EdgeInsets.all(12),
                                     decoration: BoxDecoration(
-                                      color: isTyping ? const Color(0xFF5B6CFF) : const Color(0xFF2EC7A5),
+                                      color: isTyping
+                                          ? const Color(0xFF5B6CFF)
+                                          : const Color(0xFF2EC7A5),
                                       shape: BoxShape.circle,
                                       boxShadow: [
                                         BoxShadow(
-                                          color: (isTyping ? const Color(0xFF5B6CFF) : const Color(0xFF2EC7A5)).withAlpha(77),
+                                          color:
+                                              (isTyping
+                                                      ? const Color(0xFF5B6CFF)
+                                                      : const Color(0xFF2EC7A5))
+                                                  .withAlpha(77),
                                           blurRadius: 8,
-                                          offset: const Offset(0, 3)
-                                        )
-                                      ]
+                                          offset: const Offset(0, 3),
+                                        ),
+                                      ],
                                     ),
                                     child: Icon(
                                       isTyping ? Icons.send_rounded : Icons.mic,

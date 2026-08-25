@@ -4,4 +4,8 @@
 class File {
   final String path;
   File(this.path);
+
+  Future<bool> exists() async => false;
+  Future<int> length() async => 0;
+  Future<void> writeAsBytes(List<int> bytes) async {}
 }

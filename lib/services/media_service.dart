@@ -82,7 +82,8 @@ class MediaService {
   final String baseUrl;
   late final Dio _dio;
   static const int _maxAttempts = 3; // ✅ زيادة المحاولات إلى 3
-  static const int _maxFileSizeBytes = 500 * 1024 * 1024; // ✅ حد أقصى 500 ميجابايت
+  static const int _maxFileSizeBytes =
+      500 * 1024 * 1024; // ✅ حد أقصى 500 ميجابايت
   static const Duration _uploadTimeout = Duration(minutes: 10);
 
   /// ✅ Progress callback stream for real-time tracking
@@ -155,7 +156,7 @@ class MediaService {
       }
 
       final startedAt = DateTime.now();
-      
+
       // ✅ Upload with progress tracking
       final response = await _dio.post(
         baseUrl,
@@ -229,7 +230,9 @@ class MediaService {
     bool isVideo = false,
     Function(UploadProgress)? onProgress,
   }) async {
-    final safeFileName = _sanitizeFileName(file.name);
+    final safeFileName = _sanitizeFileName(
+      _fileNameWithMimeExtension(file.name, file.mimeType, isVideo: isVideo),
+    );
     final mimeType = _getMimeType(safeFileName, isVideo: isVideo);
     final fileType = _detectFileType(safeFileName, isVideo: isVideo);
 
@@ -410,7 +413,7 @@ class MediaService {
             'Content-Length': bytes.length,
             'Accept': 'application/json',
             'X-Requested-With': 'flutter',
-            'X-Bz-Content-Sha1': 'do_not_verify_sha1', 
+            'X-Bz-Content-Sha1': 'do_not_verify_sha1',
             'X-File-Type': fileType, // ✅ إرسال نوع الملف المكتشف
           },
         ),
@@ -462,7 +465,7 @@ class MediaService {
               error.message ??
               error.error?.toString() ??
               'Unknown Dio error';
-              
+
           if (statusCode == 0) {
             lastError = 'فشل اتصال الرفع (${error.type}): $errorMessage';
           } else {
@@ -538,7 +541,8 @@ class MediaService {
       if (statusCode == null || statusCode < 200 || statusCode >= 300) {
         return MediaUploadResult(
           success: false,
-          error: payload['error']?.toString() ??
+          error:
+              payload['error']?.toString() ??
               'فشل الرفع برمز HTTP ${statusCode ?? 'غير معروف'}',
         );
       }
@@ -590,6 +594,38 @@ class MediaService {
     }
     final normalized = trimmed.replaceAll(RegExp(r'\s+'), '_');
     return normalized;
+  }
+
+  String _fileNameWithMimeExtension(
+    String fileName,
+    String? mimeType, {
+    required bool isVideo,
+  }) {
+    final trimmedName = fileName.trim();
+    final lowerName = trimmedName.toLowerCase();
+    final hasKnownExtension = isVideo
+        ? lowerName.endsWith('.mp4') ||
+              lowerName.endsWith('.mov') ||
+              lowerName.endsWith('.m4v') ||
+              lowerName.endsWith('.webm')
+        : lowerName.endsWith('.jpg') ||
+              lowerName.endsWith('.jpeg') ||
+              lowerName.endsWith('.png') ||
+              lowerName.endsWith('.gif') ||
+              lowerName.endsWith('.webp');
+    if (hasKnownExtension || mimeType == null) return trimmedName;
+
+    const mimeExtensions = <String, String>{
+      'image/jpeg': '.jpg',
+      'image/png': '.png',
+      'image/webp': '.webp',
+      'image/gif': '.gif',
+      'video/mp4': '.mp4',
+      'video/quicktime': '.mov',
+      'video/webm': '.webm',
+    };
+    final extension = mimeExtensions[mimeType.toLowerCase()];
+    return extension == null ? trimmedName : '$trimmedName$extension';
   }
 
   /// ✅ Detect actual file type from extension
@@ -664,7 +700,8 @@ class MediaService {
   String _getMimeType(String fileName, {required bool isVideo}) {
     final lowered = fileName.toLowerCase();
 
-    if (lowered.endsWith('.jpg') || lowered.endsWith('.jpeg')) return 'image/jpeg';
+    if (lowered.endsWith('.jpg') || lowered.endsWith('.jpeg'))
+      return 'image/jpeg';
     if (lowered.endsWith('.png')) return 'image/png';
     if (lowered.endsWith('.gif')) return 'image/gif';
     if (lowered.endsWith('.webp')) return 'image/webp';
@@ -693,12 +730,15 @@ class MediaService {
 
     if (lowered.endsWith('.pdf')) return 'application/pdf';
     if (lowered.endsWith('.doc')) return 'application/msword';
-    if (lowered.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    if (lowered.endsWith('.docx'))
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     if (lowered.endsWith('.txt')) return 'text/plain';
     if (lowered.endsWith('.xls')) return 'application/vnd.ms-excel';
-    if (lowered.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    if (lowered.endsWith('.xlsx'))
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     if (lowered.endsWith('.ppt')) return 'application/vnd.ms-powerpoint';
-    if (lowered.endsWith('.pptx')) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    if (lowered.endsWith('.pptx'))
+      return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
     if (lowered.endsWith('.csv')) return 'text/csv';
     if (lowered.endsWith('.json')) return 'application/json';
     if (lowered.endsWith('.xml')) return 'application/xml';

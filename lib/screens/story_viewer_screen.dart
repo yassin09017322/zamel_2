@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io' as io; // 🔥 تمت الإضافة هنا لحل تضارب نوع الملفات
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -8,7 +10,9 @@ import 'package:video_player/video_player.dart';
 
 import '../models/story.dart';
 import '../providers/auth_provider.dart';
+import '../services/story_local_storage_service.dart';
 import '../services/story_service.dart';
+import '../src/platform_file.dart';
 import 'profile_screen.dart';
 
 String _buildStoryVideoUrl(String url) {
@@ -16,7 +20,10 @@ String _buildStoryVideoUrl(String url) {
   final uri = Uri.tryParse(url);
   if (uri == null || !uri.path.contains('/upload/')) return url;
 
-  final path = uri.path.replaceFirst('/upload/', '/upload/q_auto,f_mp4,vc_h264,ac_aac,');
+  final path = uri.path.replaceFirst(
+    '/upload/',
+    '/upload/q_auto,f_mp4,vc_h264,ac_aac,',
+  );
   return uri.replace(path: path).toString();
 }
 
@@ -38,7 +45,8 @@ class StoryViewerScreen extends StatefulWidget {
   State<StoryViewerScreen> createState() => _StoryViewerScreenState();
 }
 
-class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTickerProviderStateMixin {
+class _StoryViewerScreenState extends State<StoryViewerScreen>
+    with SingleTickerProviderStateMixin {
   late final PageController _pageController;
   late int _currentIndex;
   VideoPlayerController? _videoController;
@@ -51,17 +59,24 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
   final TextEditingController _replyController = TextEditingController();
   final List<String> _quickReactions = ['❤️', '🔥', '👏', '🎉'];
   final StoryService _storyService = StoryService();
+  final StoryLocalStorageService _localStorage = StoryLocalStorageService();
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _storyDocSub;
+  Timer? _expiryTimer;
+  int _loadGeneration = 0;
+  String? _localMediaPath;
+  bool _isMediaLoading = false;
   List<Map<String, dynamic>>? _liveViewers;
   List<Map<String, dynamic>>? _liveReactions;
-  
 
   @override
   void initState() {
     super.initState();
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: widget.initialIndex);
-    _progressController = AnimationController(vsync: this, duration: const Duration(seconds: 5));
+    _progressController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 5),
+    );
     unawaited(_recordView());
     _subscribeToCurrentStoryDoc();
     _progressController.addStatusListener((status) {
@@ -77,7 +92,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
     if (story.userId.isEmpty) return;
 
     try {
-      final doc = await FirebaseFirestore.instance.collection('users').doc(story.userId).get();
+      final doc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(story.userId)
+          .get();
       if (!mounted || !doc.exists) {
         if (mounted) {
           setState(() {
@@ -94,8 +112,12 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
 
       if (mounted) {
         setState(() {
-          _profileImageUrl = photoUrl != null && photoUrl.isNotEmpty ? photoUrl : null;
-          _profileName = username != null && username.isNotEmpty ? username : story.username;
+          _profileImageUrl = photoUrl != null && photoUrl.isNotEmpty
+              ? photoUrl
+              : null;
+          _profileName = username != null && username.isNotEmpty
+              ? username
+              : story.username;
         });
       }
     } catch (_) {
@@ -111,6 +133,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
   @override
   void dispose() {
     _storyDocSub?.cancel();
+    _expiryTimer?.cancel();
     _progressController.dispose();
     _replyController.dispose();
     _videoController?.dispose();
@@ -120,22 +143,56 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
 
   Future<void> _loadCurrentStory() async {
     final story = widget.stories[_currentIndex];
+    final loadGeneration = ++_loadGeneration;
+    _expiryTimer?.cancel();
+    final remaining = story.expiresAt.difference(DateTime.now().toUtc());
+    if (!story.isActiveAt(DateTime.now().toUtc())) {
+      _goToNextStory();
+      return;
+    }
+    _expiryTimer = Timer(remaining, () {
+      if (mounted) _goToNextStory();
+    });
+    _localMediaPath = null;
+    _isMediaLoading = story.mediaType != 'text';
+    if (mounted) setState(() {});
+
+    String? localMediaPath;
+    if (story.mediaType != 'text' && !kIsWeb) {
+      try {
+        localMediaPath = await _localStorage.ensureLocalPath(story);
+      } catch (error) {
+        debugPrint('Story local media loading failed: $error');
+      }
+    }
+    if (!mounted || loadGeneration != _loadGeneration) return;
+    _localMediaPath = localMediaPath;
+    _isMediaLoading = false;
+
     if (story.mediaType == 'video') {
       _videoController?.dispose();
-      _videoController = VideoPlayerController.network(_buildStoryVideoUrl(story.imageUrl));
-      try {
-        await _videoController!.initialize();
-        _videoController!
-          ..setLooping(true)
-          ..play();
-        if (mounted) {
-          setState(() => _isVideoInitialized = true);
+      _videoController = localMediaPath != null
+          ? VideoPlayerController.file(io.File(localMediaPath)) // 🔥 التعديل الجذري الأول هنا (io.File)
+          : kIsWeb
+          ? VideoPlayerController.networkUrl(Uri.parse(_buildStoryVideoUrl(story.imageUrl))) // تحديث الدالة القديمة
+          : null;
+      if (_videoController != null) {
+        try {
+          await _videoController!.initialize();
+          _videoController!
+            ..setLooping(true)
+            ..play();
+          if (mounted) {
+            setState(() => _isVideoInitialized = true);
+          }
+        } catch (error) {
+          debugPrint('Story video initialization failed: $error');
+          if (mounted) {
+            setState(() => _isVideoInitialized = false);
+          }
         }
-      } catch (error) {
-        debugPrint('Story video initialization failed: $error');
-        if (mounted) {
-          setState(() => _isVideoInitialized = false);
-        }
+      } else if (mounted) {
+        setState(() => _isVideoInitialized = false);
       }
     } else {
       _videoController?.dispose();
@@ -160,31 +217,58 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
     final story = widget.stories[_currentIndex];
     if (story.id.isEmpty) return;
     try {
-      _storyDocSub = FirebaseFirestore.instance.collection('stories').doc(story.id).snapshots().listen((doc) {
-        if (!mounted) return;
-        final data = doc.data();
-        setState(() {
-          _liveViewers = (data?['viewers'] as List<dynamic>?)?.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList() ?? [];
-          _liveReactions = (data?['reactions'] as List<dynamic>?)?.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList() ?? [];
-        });
-      });
+      _storyDocSub = FirebaseFirestore.instance
+          .collection('stories')
+          .doc(story.id)
+          .snapshots()
+          .listen((doc) {
+            if (!mounted) return;
+            final data = doc.data();
+            setState(() {
+              _liveViewers =
+                  (data?['viewers'] as List<dynamic>?)
+                      ?.whereType<Map>()
+                      .map((m) => Map<String, dynamic>.from(m))
+                      .toList() ??
+                  [];
+              _liveReactions =
+                  (data?['reactions'] as List<dynamic>?)
+                      ?.whereType<Map>()
+                      .map((m) => Map<String, dynamic>.from(m))
+                      .toList() ??
+                  [];
+            });
+          });
     } catch (_) {}
   }
 
   Future<void> _recordView() async {
     final story = widget.stories[_currentIndex];
+    if (!story.isActiveAt(DateTime.now().toUtc())) return;
     final auth = Provider.of<AuthProvider>(context, listen: false).currentUser;
     if (auth == null) return;
-    await _storyService.addViewer(storyId: story.id, userId: auth.id, username: auth.username);
+    await _storyService.addViewer(
+      storyId: story.id,
+      userId: auth.id,
+      username: auth.username,
+    );
   }
 
   Future<void> _sendReaction(String emoji) async {
     final story = widget.stories[_currentIndex];
+    if (!story.isActiveAt(DateTime.now().toUtc())) return;
     final auth = Provider.of<AuthProvider>(context, listen: false).currentUser;
     if (auth == null) return;
-    await _storyService.addReaction(storyId: story.id, userId: auth.id, username: auth.username, emoji: emoji);
+    await _storyService.addReaction(
+      storyId: story.id,
+      userId: auth.id,
+      username: auth.username,
+      emoji: emoji,
+    );
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم إرسال $emoji')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('تم إرسال $emoji')));
     }
   }
 
@@ -192,20 +276,32 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
     final text = _replyController.text.trim();
     if (text.isEmpty) return;
     final story = widget.stories[_currentIndex];
+    if (!story.isActiveAt(DateTime.now().toUtc())) return;
     final auth = Provider.of<AuthProvider>(context, listen: false).currentUser;
     if (auth == null) return;
-    await _storyService.addReply(storyId: story.id, userId: auth.id, username: auth.username, text: text);
+    await _storyService.addReply(
+      storyId: story.id,
+      userId: auth.id,
+      username: auth.username,
+      text: text,
+    );
     if (mounted) {
       _replyController.clear();
       FocusScope.of(context).unfocus();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال الرسالة')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تم إرسال الرسالة')));
     }
   }
 
   void _goToNextStory() {
     if (_currentIndex < widget.stories.length - 1) {
       setState(() => _currentIndex += 1);
-      _pageController.animateToPage(_currentIndex, duration: const Duration(milliseconds: 250), curve: Curves.easeInOut);
+      _pageController.animateToPage(
+        _currentIndex,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+      );
       _loadCurrentStory();
     } else {
       Navigator.of(context).pop();
@@ -215,7 +311,11 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
   void _goToPreviousStory() {
     if (_currentIndex > 0) {
       setState(() => _currentIndex -= 1);
-      _pageController.animateToPage(_currentIndex, duration: const Duration(milliseconds: 250), curve: Curves.easeInOut);
+      _pageController.animateToPage(
+        _currentIndex,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeInOut,
+      );
       _loadCurrentStory();
     }
   }
@@ -233,7 +333,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
     final story = widget.stories[_currentIndex];
     if (story.userId.isEmpty) return;
 
-    if (_videoController != null && _videoController!.value.isInitialized && _videoController!.value.isPlaying) {
+    if (_videoController != null &&
+        _videoController!.value.isInitialized &&
+        _videoController!.value.isPlaying) {
       await _videoController!.pause();
     }
     if (_progressController.isAnimating) {
@@ -244,11 +346,15 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
       setState(() => _isPaused = true);
     }
 
-    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProfileScreen(userId: story.userId)));
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ProfileScreen(userId: story.userId)),
+    );
 
     if (mounted) {
       setState(() => _isPaused = false);
-      if (_videoController != null && _videoController!.value.isInitialized && !_videoController!.value.isPlaying) {
+      if (_videoController != null &&
+          _videoController!.value.isInitialized &&
+          !_videoController!.value.isPlaying) {
         unawaited(_videoController!.play());
       }
       if (_progressController.isAnimating == false) {
@@ -298,14 +404,42 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                 },
                 itemBuilder: (context, index) {
                   final item = widget.stories[index];
+                  final useLocalImage =
+                      index == _currentIndex &&
+                      _localMediaPath != null &&
+                      item.mediaType != 'video';
                   return Stack(
                     children: [
                       Positioned.fill(
                         child: item.mediaType == 'video'
-                            ? (_isVideoInitialized && index == _currentIndex ? _buildVideoPlayer() : const Center(child: CircularProgressIndicator(color: Colors.white)))
+                            ? (_isVideoInitialized && index == _currentIndex
+                                  ? _buildVideoPlayer()
+                                  : const Center(
+                                      child: CircularProgressIndicator(
+                                        color: Colors.white,
+                                      ),
+                                    ))
                             : item.mediaType == 'text'
-                                ? _buildTextStory(item)
-                                : Image.network(item.imageUrl, fit: BoxFit.cover, width: double.infinity),
+                            ? _buildTextStory(item)
+                            : useLocalImage
+                            ? Image.file(
+                                io.File(_localMediaPath!), // 🔥 التعديل الجذري الثاني هنا (io.File)
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                              )
+                            : _isMediaLoading && index == _currentIndex
+                            ? const Center(
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                ),
+                              )
+                            : !kIsWeb && index == _currentIndex
+                            ? _buildMissingMediaPlaceholder()
+                            : Image.network(
+                                item.imageUrl,
+                                fit: BoxFit.cover,
+                                width: double.infinity,
+                              ),
                       ),
                       Positioned(
                         top: 12,
@@ -317,7 +451,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                             GestureDetector(
                               onTap: _openCurrentProfile,
                               child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
                                 decoration: BoxDecoration(
                                   color: Colors.black54,
                                   borderRadius: BorderRadius.circular(999),
@@ -328,35 +465,58 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                                     CircleAvatar(
                                       radius: 16,
                                       backgroundColor: Colors.white24,
-                                      backgroundImage: _profileImageUrl != null ? NetworkImage(_profileImageUrl!) : null,
+                                      backgroundImage: _profileImageUrl != null
+                                          ? NetworkImage(_profileImageUrl!)
+                                          : null,
                                       child: _profileImageUrl == null
                                           ? Text(
-                                              (_profileName.isNotEmpty ? _profileName[0] : 'م').toUpperCase(),
-                                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                              (_profileName.isNotEmpty
+                                                      ? _profileName[0]
+                                                      : 'م')
+                                                  .toUpperCase(),
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                              ),
                                             )
                                           : null,
                                     ),
                                     const SizedBox(width: 8),
                                     Text(
-                                      _profileName.isNotEmpty ? _profileName : item.username,
-                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                      _profileName.isNotEmpty
+                                          ? _profileName
+                                          : item.username,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
                                     const SizedBox(width: 6),
-                                    const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 14),
+                                    const Icon(
+                                      Icons.arrow_forward_ios_rounded,
+                                      color: Colors.white,
+                                      size: 14,
+                                    ),
                                   ],
                                 ),
                               ),
                             ),
                             const SizedBox(height: 10),
                             Row(
-                              children: List.generate(widget.stories.length, (i) {
+                              children: List.generate(widget.stories.length, (
+                                i,
+                              ) {
                                 final active = i == index;
                                 return Expanded(
                                   child: Container(
-                                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                                    margin: const EdgeInsets.symmetric(
+                                      horizontal: 2,
+                                    ),
                                     height: 3,
                                     decoration: BoxDecoration(
-                                      color: active ? Colors.white : Colors.white38,
+                                      color: active
+                                          ? Colors.white
+                                          : Colors.white38,
                                       borderRadius: BorderRadius.circular(2),
                                     ),
                                   ),
@@ -381,7 +541,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                                     await _handleShare();
                                   } else if (value == 'viewers') {
                                     // Show viewers list modal
-                                    final viewers = _liveViewers ?? widget.stories[_currentIndex].viewers;
+                                    final viewers =
+                                        _liveViewers ??
+                                        widget.stories[_currentIndex].viewers;
                                     await showModalBottomSheet(
                                       context: context,
                                       isScrollControlled: true,
@@ -391,25 +553,83 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                                           child: Column(
                                             mainAxisSize: MainAxisSize.min,
                                             children: [
-                                              Container(width: 44, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(999))),
+                                              Container(
+                                                width: 44,
+                                                height: 5,
+                                                decoration: BoxDecoration(
+                                                  color: Colors.grey[300],
+                                                  borderRadius:
+                                                      BorderRadius.circular(
+                                                        999,
+                                                      ),
+                                                ),
+                                              ),
                                               const SizedBox(height: 12),
-                                              Text('مشاهدو القصة', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                                              Text(
+                                                'مشاهدو القصة',
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .titleMedium
+                                                    ?.copyWith(
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                              ),
                                               const SizedBox(height: 12),
                                               if (viewers.isEmpty)
-                                                const Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Text('لا يوجد مشاهدون بعد'))
+                                                const Padding(
+                                                  padding: EdgeInsets.symmetric(
+                                                    vertical: 20,
+                                                  ),
+                                                  child: Text(
+                                                    'لا يوجد مشاهدون بعد',
+                                                  ),
+                                                )
                                               else
                                                 SizedBox(
-                                                  height: MediaQuery.of(ctx).size.height * 0.56,
+                                                  height:
+                                                      MediaQuery.of(
+                                                        ctx,
+                                                      ).size.height *
+                                                      0.56,
                                                   child: ListView.separated(
                                                     shrinkWrap: true,
                                                     itemCount: viewers.length,
-                                                    separatorBuilder: (_, __) => const Divider(height: 1),
+                                                    separatorBuilder: (_, __) =>
+                                                        const Divider(
+                                                          height: 1,
+                                                        ),
                                                     itemBuilder: (context, i) {
-                                                      final v = Map<String, dynamic>.from(viewers[i]);
+                                                      final v =
+                                                          Map<
+                                                            String,
+                                                            dynamic
+                                                          >.from(viewers[i]);
                                                       return ListTile(
-                                                        leading: CircleAvatar(child: Text((v['username'] as String?)?.substring(0, 1).toUpperCase() ?? '?')),
-                                                        title: Text(v['username'] ?? 'مستخدم'),
-                                                        subtitle: v['timestamp'] != null ? Text(v['timestamp'].toString()) : null,
+                                                        leading: CircleAvatar(
+                                                          child: Text(
+                                                            (v['username']
+                                                                        as String?)
+                                                                    ?.substring(
+                                                                      0,
+                                                                      1,
+                                                                    )
+                                                                    .toUpperCase() ??
+                                                                '?',
+                                                          ),
+                                                        ),
+                                                        title: Text(
+                                                          v['username'] ??
+                                                              'مستخدم',
+                                                        ),
+                                                        subtitle:
+                                                            v['timestamp'] !=
+                                                                null
+                                                            ? Text(
+                                                                v['timestamp']
+                                                                    .toString(),
+                                                              )
+                                                            : null,
                                                       );
                                                     },
                                                   ),
@@ -422,10 +642,22 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                                   }
                                 },
                                 itemBuilder: (context) => const [
-                                  PopupMenuItem(value: 'delete', child: Text('حذف القصة')),
-                                  PopupMenuItem(value: 'share', child: Text('مشاركة القصة')),
-                                  PopupMenuItem(value: 'viewers', child: Text('عرض المشاهدين')),
-                                  PopupMenuItem(value: 'add', child: Text('إضافة قصة جديدة')),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text('حذف القصة'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'share',
+                                    child: Text('مشاركة القصة'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'viewers',
+                                    child: Text('عرض المشاهدين'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'add',
+                                    child: Text('إضافة قصة جديدة'),
+                                  ),
                                 ],
                               ),
                             if (!widget.isOwner)
@@ -438,13 +670,27 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                                     widget.onHideStoryUser?.call(story.userId);
                                     if (mounted) {
                                       Navigator.of(context).pop();
-                                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إخفاء قصص هذا المستخدم')));
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'تم إخفاء قصص هذا المستخدم',
+                                          ),
+                                        ),
+                                      );
                                     }
                                   }
                                 },
                                 itemBuilder: (context) => const [
-                                  PopupMenuItem(value: 'share', child: Text('مشاركة القصة')),
-                                  PopupMenuItem(value: 'hide', child: Text('إخفاء قصص هذا المستخدم')),
+                                  PopupMenuItem(
+                                    value: 'share',
+                                    child: Text('مشاركة القصة'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'hide',
+                                    child: Text('إخفاء قصص هذا المستخدم'),
+                                  ),
                                 ],
                               ),
                           ],
@@ -458,7 +704,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                             GestureDetector(
                               onTap: () async {
                                 // show viewers list
-                                final viewers = _liveViewers ?? widget.stories[_currentIndex].viewers;
+                                final viewers =
+                                    _liveViewers ??
+                                    widget.stories[_currentIndex].viewers;
                                 await showModalBottomSheet(
                                   context: context,
                                   isScrollControlled: true,
@@ -468,25 +716,75 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                                       child: Column(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Container(width: 44, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(999))),
+                                          Container(
+                                            width: 44,
+                                            height: 5,
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey[300],
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                          ),
                                           const SizedBox(height: 12),
-                                          Text('مشاهدو القصة', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                                          Text(
+                                            'مشاهدو القصة',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleMedium
+                                                ?.copyWith(
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                          ),
                                           const SizedBox(height: 12),
                                           if (viewers.isEmpty)
-                                            const Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Text('لا يوجد مشاهدون بعد'))
+                                            const Padding(
+                                              padding: EdgeInsets.symmetric(
+                                                vertical: 20,
+                                              ),
+                                              child: Text(
+                                                'لا يوجد مشاهدون بعد',
+                                              ),
+                                            )
                                           else
                                             SizedBox(
-                                              height: MediaQuery.of(ctx).size.height * 0.56,
+                                              height:
+                                                  MediaQuery.of(
+                                                    ctx,
+                                                  ).size.height *
+                                                  0.56,
                                               child: ListView.separated(
                                                 shrinkWrap: true,
                                                 itemCount: viewers.length,
-                                                separatorBuilder: (_, __) => const Divider(height: 1),
+                                                separatorBuilder: (_, __) =>
+                                                    const Divider(height: 1),
                                                 itemBuilder: (context, i) {
-                                                  final v = Map<String, dynamic>.from(viewers[i]);
+                                                  final v =
+                                                      Map<String, dynamic>.from(
+                                                        viewers[i],
+                                                      );
                                                   return ListTile(
-                                                    leading: CircleAvatar(child: Text((v['username'] as String?)?.substring(0, 1).toUpperCase() ?? '?')),
-                                                    title: Text(v['username'] ?? 'مستخدم'),
-                                                    subtitle: v['timestamp'] != null ? Text(v['timestamp'].toString()) : null,
+                                                    leading: CircleAvatar(
+                                                      child: Text(
+                                                        (v['username']
+                                                                    as String?)
+                                                                ?.substring(
+                                                                  0,
+                                                                  1,
+                                                                )
+                                                                .toUpperCase() ??
+                                                            '?',
+                                                      ),
+                                                    ),
+                                                    title: Text(
+                                                      v['username'] ?? 'مستخدم',
+                                                    ),
+                                                    subtitle:
+                                                        v['timestamp'] != null
+                                                        ? Text(
+                                                            v['timestamp']
+                                                                .toString(),
+                                                          )
+                                                        : null,
                                                   );
                                                 },
                                               ),
@@ -498,13 +796,28 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                                 );
                               },
                               child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
                                 child: Row(
                                   children: [
-                                    const Icon(Icons.visibility, color: Colors.white, size: 16),
+                                    const Icon(
+                                      Icons.visibility,
+                                      color: Colors.white,
+                                      size: 16,
+                                    ),
                                     const SizedBox(width: 6),
-                                    Text('${_liveViewers?.length ?? story.viewers.length}', style: const TextStyle(color: Colors.white)),
+                                    Text(
+                                      '${_liveViewers?.length ?? story.viewers.length}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -513,7 +826,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                             GestureDetector(
                               onTap: () async {
                                 // show reactions list
-                                final reactions = _liveReactions ?? widget.stories[_currentIndex].reactions;
+                                final reactions =
+                                    _liveReactions ??
+                                    widget.stories[_currentIndex].reactions;
                                 await showModalBottomSheet(
                                   context: context,
                                   isScrollControlled: true,
@@ -523,25 +838,75 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                                       child: Column(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Container(width: 44, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(999))),
+                                          Container(
+                                            width: 44,
+                                            height: 5,
+                                            decoration: BoxDecoration(
+                                              color: Colors.grey[300],
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                          ),
                                           const SizedBox(height: 12),
-                                          Text('تفاعلات القصة', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                                          Text(
+                                            'تفاعلات القصة',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleMedium
+                                                ?.copyWith(
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                          ),
                                           const SizedBox(height: 12),
                                           if (reactions.isEmpty)
-                                            const Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Text('لا توجد تفاعلات بعد'))
+                                            const Padding(
+                                              padding: EdgeInsets.symmetric(
+                                                vertical: 20,
+                                              ),
+                                              child: Text(
+                                                'لا توجد تفاعلات بعد',
+                                              ),
+                                            )
                                           else
                                             Flexible(
                                               child: ListView.separated(
                                                 shrinkWrap: true,
                                                 itemCount: reactions.length,
-                                                separatorBuilder: (_, __) => const Divider(height: 1),
+                                                separatorBuilder: (_, __) =>
+                                                    const Divider(height: 1),
                                                 itemBuilder: (context, i) {
-                                                  final r = Map<String, dynamic>.from(reactions[i]);
+                                                  final r =
+                                                      Map<String, dynamic>.from(
+                                                        reactions[i],
+                                                      );
                                                   return ListTile(
-                                                    leading: CircleAvatar(child: Text((r['username'] as String?)?.substring(0, 1).toUpperCase() ?? '?')),
-                                                    title: Text(r['username'] ?? 'مستخدم'),
-                                                    subtitle: Text(r['emoji'] ?? ''),
-                                                    trailing: r['timestamp'] != null ? Text((r['timestamp'] as String).split('T').first) : null,
+                                                    leading: CircleAvatar(
+                                                      child: Text(
+                                                        (r['username']
+                                                                    as String?)
+                                                                ?.substring(
+                                                                  0,
+                                                                  1,
+                                                                )
+                                                                .toUpperCase() ??
+                                                            '?',
+                                                      ),
+                                                    ),
+                                                    title: Text(
+                                                      r['username'] ?? 'مستخدم',
+                                                    ),
+                                                    subtitle: Text(
+                                                      r['emoji'] ?? '',
+                                                    ),
+                                                    trailing:
+                                                        r['timestamp'] != null
+                                                        ? Text(
+                                                            (r['timestamp']
+                                                                    as String)
+                                                                .split('T')
+                                                                .first,
+                                                          )
+                                                        : null,
                                                   );
                                                 },
                                               ),
@@ -553,13 +918,28 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                                 );
                               },
                               child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
                                 child: Row(
                                   children: [
-                                    const Icon(Icons.emoji_emotions, color: Colors.white, size: 16),
+                                    const Icon(
+                                      Icons.emoji_emotions,
+                                      color: Colors.white,
+                                      size: 16,
+                                    ),
                                     const SizedBox(width: 6),
-                                    Text('${_liveReactions?.length ?? story.reactions.length}', style: const TextStyle(color: Colors.white)),
+                                    Text(
+                                      '${_liveReactions?.length ?? story.reactions.length}',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                    ),
                                   ],
                                 ),
                               ),
@@ -574,18 +954,40 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(story.username, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                            Text(
+                              story.username,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                             const SizedBox(height: 10),
                             Wrap(
                               spacing: 8,
-                              children: _quickReactions.map((emoji) => GestureDetector(
-                                onTap: () => _sendReaction(emoji),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                  decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(18)),
-                                  child: Text(emoji, style: const TextStyle(fontSize: 20)),
-                                ),
-                              )).toList(),
+                              children: _quickReactions
+                                  .map(
+                                    (emoji) => GestureDetector(
+                                      onTap: () => _sendReaction(emoji),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 10,
+                                          vertical: 8,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white24,
+                                          borderRadius: BorderRadius.circular(
+                                            18,
+                                          ),
+                                        ),
+                                        child: Text(
+                                          emoji,
+                                          style: const TextStyle(fontSize: 20),
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
                             ),
                           ],
                         ),
@@ -607,12 +1009,19 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                                     style: const TextStyle(color: Colors.white),
                                     decoration: InputDecoration(
                                       hintText: 'اكتب رسالة أو اسأل سؤالاً',
-                                      hintStyle: const TextStyle(color: Colors.white70),
+                                      hintStyle: const TextStyle(
+                                        color: Colors.white70,
+                                      ),
                                       filled: true,
                                       fillColor: Colors.white12,
-                                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(24),
+                                      ),
                                       suffixIcon: IconButton(
-                                        icon: const Icon(Icons.send, color: Colors.white),
+                                        icon: const Icon(
+                                          Icons.send,
+                                          color: Colors.white,
+                                        ),
                                         onPressed: _sendReply,
                                       ),
                                     ),
@@ -622,22 +1031,53 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                                 children: [
                                   Expanded(
                                     child: GestureDetector(
-                                      onTap: () => setState(() => _showControls = !_showControls),
+                                      onTap: () => setState(
+                                        () => _showControls = !_showControls,
+                                      ),
                                       child: Container(
-                                        padding: const EdgeInsets.symmetric(vertical: 10),
-                                        decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(18)),
-                                        child: const Center(child: Text('تفاعل', style: TextStyle(color: Colors.white))),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 10,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white10,
+                                          borderRadius: BorderRadius.circular(
+                                            18,
+                                          ),
+                                        ),
+                                        child: const Center(
+                                          child: Text(
+                                            'تفاعل',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: GestureDetector(
-                                      onTap: () => setState(() => _showControls = true),
+                                      onTap: () =>
+                                          setState(() => _showControls = true),
                                       child: Container(
-                                        padding: const EdgeInsets.symmetric(vertical: 10),
-                                        decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(18)),
-                                        child: const Center(child: Text('اسألني سؤالاً', style: TextStyle(color: Colors.white))),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 10,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white10,
+                                          borderRadius: BorderRadius.circular(
+                                            18,
+                                          ),
+                                        ),
+                                        child: const Center(
+                                          child: Text(
+                                            'اسألني سؤالاً',
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -663,13 +1103,34 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                         key: const ValueKey('controls'),
                         margin: const EdgeInsets.symmetric(horizontal: 16),
                         padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(color: Colors.black45, borderRadius: BorderRadius.circular(16)),
+                        decoration: BoxDecoration(
+                          color: Colors.black45,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            IconButton(icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white), onPressed: _goToPreviousStory),
-                            IconButton(icon: Icon(_isPaused ? Icons.play_arrow : Icons.pause, color: Colors.white), onPressed: _togglePause),
-                            IconButton(icon: const Icon(Icons.arrow_forward_ios, color: Colors.white), onPressed: _goToNextStory),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.arrow_back_ios_new,
+                                color: Colors.white,
+                              ),
+                              onPressed: _goToPreviousStory,
+                            ),
+                            IconButton(
+                              icon: Icon(
+                                _isPaused ? Icons.play_arrow : Icons.pause,
+                                color: Colors.white,
+                              ),
+                              onPressed: _togglePause,
+                            ),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.arrow_forward_ios,
+                                color: Colors.white,
+                              ),
+                              onPressed: _goToNextStory,
+                            ),
                           ],
                         ),
                       )
@@ -683,23 +1144,46 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
   }
 
   Widget _buildVideoPlayer() {
+    if (_videoController == null && !_isMediaLoading) {
+      return _buildMissingMediaPlaceholder();
+    }
     if (!_isVideoInitialized || _videoController == null) {
-      return const Center(child: CircularProgressIndicator(color: Colors.white));
+      return const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      );
     }
     return Stack(
       alignment: Alignment.center,
       children: [
-        AspectRatio(aspectRatio: _videoController!.value.aspectRatio, child: VideoPlayer(_videoController!)),
+        AspectRatio(
+          aspectRatio: _videoController!.value.aspectRatio,
+          child: VideoPlayer(_videoController!),
+        ),
         if (_showControls)
           CircleAvatar(
             radius: 28,
             backgroundColor: Colors.black54,
             child: IconButton(
-              icon: Icon(_videoController!.value.isPlaying ? Icons.pause : Icons.play_arrow, color: Colors.white, size: 32),
+              icon: Icon(
+                _videoController!.value.isPlaying
+                    ? Icons.pause
+                    : Icons.play_arrow,
+                color: Colors.white,
+                size: 32,
+              ),
               onPressed: _toggleVideoPlayback,
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildMissingMediaPlaceholder() {
+    return const Center(
+      child: Text(
+        'تعذر تحميل الوسائط محليًا',
+        style: TextStyle(color: Colors.white),
+      ),
     );
   }
 
@@ -729,7 +1213,11 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
                 Text(
                   story.text.isNotEmpty ? story.text : 'قصة نصية',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.white, fontSize: 22, height: 1.4),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    height: 1.4,
+                  ),
                 ),
               ],
             ),
@@ -739,4 +1227,3 @@ class _StoryViewerScreenState extends State<StoryViewerScreen> with SingleTicker
     );
   }
 }
-

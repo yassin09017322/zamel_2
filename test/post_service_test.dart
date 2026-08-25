@@ -28,14 +28,46 @@ void main() {
       expect(SettingsProvider.normalizeFeedMode('sport'), 'sports');
       expect(SettingsProvider.normalizeFeedMode('study'), 'study');
       expect(SettingsProvider.normalizeFeedMode('culture'), 'culture');
-      expect(SettingsProvider.normalizeFeedMode('entertainment'), 'entertainment');
+      expect(
+        SettingsProvider.normalizeFeedMode('entertainment'),
+        'entertainment',
+      );
       expect(SettingsProvider.normalizeFeedMode('work'), 'work');
+      expect(
+        SettingsProvider.normalizeFeedMode('CustomCategoryID'),
+        'CustomCategoryID',
+      );
+
+      expect(
+        SettingsProvider.resolveCategoryIdForFeedMode('culture', [
+          'culture',
+          'sports',
+        ]),
+        'culture',
+      );
+      expect(
+        SettingsProvider.resolveCategoryIdForFeedMode('unknown', [
+          'culture',
+          'sports',
+        ]),
+        isNull,
+      );
+      expect(
+        SettingsProvider.resolveCategoryIdForFeedMode('all', [
+          'culture',
+          'sports',
+        ]),
+        isNull,
+      );
 
       expect(FeedProvider.normalizeCategoryFilter('general'), 'all');
       expect(FeedProvider.normalizeCategoryFilter('sport'), 'sports');
       expect(FeedProvider.normalizeCategoryFilter('study'), 'study');
       expect(FeedProvider.normalizeCategoryFilter('culture'), 'culture');
-      expect(FeedProvider.normalizeCategoryFilter('entertainment'), 'entertainment');
+      expect(
+        FeedProvider.normalizeCategoryFilter('entertainment'),
+        'entertainment',
+      );
       expect(FeedProvider.normalizeCategoryFilter('work'), 'work');
     });
   });

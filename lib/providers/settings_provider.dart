@@ -24,33 +24,50 @@ class SettingsProvider extends ChangeNotifier {
   ];
 
   static String normalizeFeedMode(String? value) {
-    final normalized = (value ?? '').trim().toLowerCase();
+    final trimmed = (value ?? '').trim();
+    final normalized = trimmed.toLowerCase();
     if (normalized.isEmpty || normalized == 'general') return 'all';
     if (normalized == 'sport') return 'sports';
     if (normalized == 'study' || normalized == 'studies') return 'study';
     if (normalized == 'culture' || normalized == 'cultural') return 'culture';
     if (normalized == 'sports' || normalized == 'sport') return 'sports';
-    if (normalized == 'fun' || normalized == 'entertainment' || normalized == 'entertain') return 'entertainment';
-    if (normalized == 'work' || normalized == 'jobs' || normalized == 'career') return 'work';
-    return normalized;
+    if (normalized == 'fun' ||
+        normalized == 'entertainment' ||
+        normalized == 'entertain')
+      return 'entertainment';
+    if (normalized == 'work' || normalized == 'jobs' || normalized == 'career')
+      return 'work';
+    return trimmed;
   }
 
-  static String? resolveCategoryIdForFeedMode(String? feedMode, Iterable<String> availableCategoryIds) {
+  static String? resolveCategoryIdForFeedMode(
+    String? feedMode,
+    Iterable<String> availableCategoryIds,
+  ) {
     final available = availableCategoryIds
         .map((value) => value.trim())
         .where((value) => value.isNotEmpty)
         .toSet();
 
-    if (available.isEmpty) return null;
-
     final normalizedMode = normalizeFeedMode(feedMode);
+    if (normalizedMode == 'all' || available.isEmpty) return null;
+
+    final exactMatch = available.firstWhere(
+      (category) => category.toLowerCase() == normalizedMode,
+      orElse: () => '',
+    );
+    if (exactMatch.isNotEmpty) return exactMatch;
+
     final modeAliases = <String>{
       normalizedMode,
-      if (normalizedMode == 'all') ...{'all', 'general'},
       if (normalizedMode == 'sports') ...{'sports', 'sport'},
       if (normalizedMode == 'study') ...{'study', 'studies'},
       if (normalizedMode == 'culture') ...{'culture', 'cultural'},
-      if (normalizedMode == 'entertainment') ...{'entertainment', 'entertain', 'fun'},
+      if (normalizedMode == 'entertainment') ...{
+        'entertainment',
+        'entertain',
+        'fun',
+      },
       if (normalizedMode == 'work') ...{'work', 'jobs', 'career'},
     };
 
@@ -65,15 +82,7 @@ class SettingsProvider extends ChangeNotifier {
       }
     }
 
-    if (normalizedMode == 'all' || normalizedMode == 'general') {
-      final fallback = available.firstWhere(
-        (category) => category.toLowerCase() == 'general' || category.toLowerCase() == 'all',
-        orElse: () => available.first,
-      );
-      return fallback;
-    }
-
-    return available.first;
+    return null;
   }
 
   bool get darkMode => _darkMode;
@@ -86,6 +95,14 @@ class SettingsProvider extends ChangeNotifier {
   bool get sharePresence => _sharePresence;
   String get feedMode => _feedMode;
 
+  static const List<String> supportedLanguageCodes = [
+    'ar',
+    'en',
+    'fr',
+    'es',
+    'tr',
+  ];
+
   SettingsProvider() {
     _loadPreferences();
   }
@@ -95,14 +112,20 @@ class SettingsProvider extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       _darkMode = prefs.getBool('darkMode') ?? false;
       final storedLanguageCode = prefs.getString('languageCode');
-      if (storedLanguageCode != null && (storedLanguageCode == 'ar' || storedLanguageCode == 'en' || storedLanguageCode == 'fr' || storedLanguageCode == 'es')) {
+      if (storedLanguageCode != null &&
+          (storedLanguageCode == 'ar' ||
+              storedLanguageCode == 'en' ||
+              storedLanguageCode == 'fr' ||
+              storedLanguageCode == 'es')) {
         _languageCode = storedLanguageCode;
       } else {
-        final deviceLocale = WidgetsBinding.instance.platformDispatcher.locale.languageCode;
+        final deviceLocale =
+            WidgetsBinding.instance.platformDispatcher.locale.languageCode;
         _languageCode = switch (deviceLocale) {
           'en' => 'en',
           'fr' => 'fr',
           'es' => 'es',
+          'tr' => 'tr',
           _ => 'ar',
         };
       }
@@ -136,7 +159,7 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> setLanguage(String languageCode) async {
-    if (languageCode != 'ar' && languageCode != 'en' && languageCode != 'fr' && languageCode != 'es') {
+    if (!supportedLanguageCodes.contains(languageCode)) {
       return;
     }
     _languageCode = languageCode;
