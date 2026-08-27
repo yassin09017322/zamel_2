@@ -13,9 +13,15 @@ class StoryUploadWidget extends StatefulWidget {
     String? fileName,
     String? cloudUrl,
     required String mediaType,
-  }) onUpload;
+  })
+  onUpload;
+  final Future<bool> Function()? beforeUpload;
 
-  const StoryUploadWidget({super.key, required this.onUpload});
+  const StoryUploadWidget({
+    super.key,
+    required this.onUpload,
+    this.beforeUpload,
+  });
 
   @override
   State<StoryUploadWidget> createState() => _StoryUploadWidgetState();
@@ -46,19 +52,25 @@ class _StoryUploadWidgetState extends State<StoryUploadWidget> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('أضف قصة جديدة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text(
+              'أضف قصة جديدة',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 10),
             // تم إضافة required String لحل الخطأ الأحمر
-            MediaPickerWidget(onPicked: ({file, bytes, fileName, required String mediaType}) async {
-              setState(() {
-                _selectedFile = file;
-                _selectedBytes = bytes;
-                _selectedFileName = fileName;
-                _selectedFileType = mediaType;
-                _cloudUrlController.clear();
-              });
-              return Future<void>.value();
-            }),
+            MediaPickerWidget(
+              onPicked:
+                  ({file, bytes, fileName, required String mediaType}) async {
+                    setState(() {
+                      _selectedFile = file;
+                      _selectedBytes = bytes;
+                      _selectedFileName = fileName;
+                      _selectedFileType = mediaType;
+                      _cloudUrlController.clear();
+                    });
+                    return Future<void>.value();
+                  },
+            ),
             if (_selectedFile != null || _selectedBytes != null) ...[
               const SizedBox(height: 10),
               Text(
@@ -67,14 +79,19 @@ class _StoryUploadWidgetState extends State<StoryUploadWidget> {
               ),
             ],
             const SizedBox(height: 10),
-            const Text('أو استخدم رابط وسحابي', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'أو استخدم رابط وسحابي',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _cloudUrlController,
               textDirection: TextDirection.ltr,
               decoration: const InputDecoration(
                 hintText: 'أدخل رابط الوسائط السحابية',
-                border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(14))),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(14)),
+                ),
               ),
               onChanged: (_) {
                 if (_cloudUrlController.text.isNotEmpty) {
@@ -88,7 +105,8 @@ class _StoryUploadWidgetState extends State<StoryUploadWidget> {
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<String>(
-              initialValue: _cloudMediaType, // تم استبدال value بـ initialValue لحل التحذير
+              initialValue:
+                  _cloudMediaType, // تم استبدال value بـ initialValue لحل التحذير
               items: const [
                 DropdownMenuItem(value: 'image', child: Text('صورة')),
                 DropdownMenuItem(value: 'video', child: Text('فيديو')),
@@ -98,13 +116,17 @@ class _StoryUploadWidgetState extends State<StoryUploadWidget> {
               },
               decoration: const InputDecoration(
                 labelText: 'نوع الوسائط للرابط السحابي',
-                border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(14))),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.all(Radius.circular(14)),
+                ),
               ),
             ),
             const SizedBox(height: 12),
             ElevatedButton(
               onPressed: _isUploading ? null : _upload,
-              child: _isUploading ? const CircularProgressIndicator(color: Colors.white) : const Text('رفع القصة'),
+              child: _isUploading
+                  ? const CircularProgressIndicator(color: Colors.white)
+                  : const Text('رفع القصة'),
             ),
           ],
         ),
@@ -115,8 +137,15 @@ class _StoryUploadWidgetState extends State<StoryUploadWidget> {
   Future<void> _upload() async {
     final cloudUrl = _cloudUrlController.text.trim();
     if (_selectedFile == null && cloudUrl.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الرجاء اختيار ملف أو إدخال رابط')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('الرجاء اختيار ملف أو إدخال رابط')),
+      );
       return;
+    }
+
+    if (widget.beforeUpload != null) {
+      final shouldContinue = await widget.beforeUpload!();
+      if (!shouldContinue || !mounted) return;
     }
 
     setState(() => _isUploading = true);
@@ -128,18 +157,22 @@ class _StoryUploadWidgetState extends State<StoryUploadWidget> {
         cloudUrl: _selectedFile == null ? cloudUrl : null,
         mediaType: _selectedFile != null ? _selectedFileType : _cloudMediaType,
       );
-      
+
       // تم إضافة حماية الـ context لحل التحذيرات الزرقاء
-      if (!mounted) return; 
+      if (!mounted) return;
 
       _cloudUrlController.clear();
       _selectedFile = null;
       _selectedBytes = null;
       _selectedFileName = null;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ تم إضافة القصة')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('✅ تم إضافة القصة')));
     } catch (_) {
-      if (!mounted) return; 
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('❌ فشل رفع القصة')));
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('❌ فشل رفع القصة')));
     } finally {
       if (mounted) {
         setState(() => _isUploading = false);

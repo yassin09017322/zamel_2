@@ -25,11 +25,13 @@ class AtyaafReelsScreen extends StatefulWidget {
 
 class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
   late final PageController _pageController;
-  final Map<int, VideoPlayerController> _controllers = <int, VideoPlayerController>{};
+  final Map<int, VideoPlayerController> _controllers =
+      <int, VideoPlayerController>{};
   final AtyaafService _service = AtyaafService();
   final AtyaafReelUploadService _uploadService = AtyaafReelUploadService();
   final Map<int, String?> _controllerErrors = <int, String?>{};
   int _currentIndex = 0;
+  int _activationRequest = 0;
   final Set<String> _countedViewIds = <String>{};
   final Map<String, int> _reactionCounts = <String, int>{};
   final Map<String, int> _shareCounts = <String, int>{};
@@ -51,11 +53,11 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     await atyaafProvider.loadVideos();
     if (!mounted || atyaafProvider.videos.isEmpty) return;
 
-    await _prepareControllersForIndex(0);
-    await _playCurrentVideo();
+    await _activateVideo(0);
   }
 
   Future<void> _reloadVideos() async {
+    _activationRequest++;
     for (final controller in _controllers.values) {
       await controller.pause();
       await controller.dispose();
@@ -73,11 +75,15 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     final provider = context.read<AtyaafProvider>();
     if (index < 0 || index >= provider.videos.length) return;
 
-    final indexesToKeep = <int>{index, index + 1, index - 1}
-        .where((value) => value >= 0 && value < provider.videos.length)
-        .toSet();
+    final indexesToKeep = <int>{
+      index,
+      index + 1,
+      index - 1,
+    }.where((value) => value >= 0 && value < provider.videos.length).toSet();
 
-    final toDispose = _controllers.keys.where((value) => !indexesToKeep.contains(value)).toList();
+    final toDispose = _controllers.keys
+        .where((value) => !indexesToKeep.contains(value))
+        .toList();
     for (final value in toDispose) {
       final controller = _controllers.remove(value);
       if (controller != null) {
@@ -87,8 +93,32 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     }
 
     await _initializeControllerForIndex(index);
-    await _initializeControllerForIndex(index + 1);
-    await _initializeControllerForIndex(index - 1);
+    unawaited(_initializeControllerForIndex(index + 1));
+    unawaited(_initializeControllerForIndex(index - 1));
+  }
+
+  Future<void> _activateVideo(int index) async {
+    final request = ++_activationRequest;
+    if (!mounted) return;
+
+    for (final entry in _controllers.entries) {
+      if (entry.key != index && entry.value.value.isInitialized) {
+        await entry.value.pause();
+      }
+    }
+
+    await _prepareControllersForIndex(index);
+    if (!mounted || request != _activationRequest || index != _currentIndex) {
+      return;
+    }
+
+    final controller = _controllers[index];
+    if (controller == null || !controller.value.isInitialized) return;
+    await controller.setVolume(1.0);
+    if (!mounted || request != _activationRequest || index != _currentIndex) {
+      return;
+    }
+    await controller.play();
   }
 
   VideoPlayerController _createNetworkController(String url) {
@@ -141,7 +171,9 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
           if (mounted) setState(() {});
           await fallbackController.dispose();
           try {
-            final alternativeController = _createNetworkController(alternativeUrl);
+            final alternativeController = _createNetworkController(
+              alternativeUrl,
+            );
             _controllers[index] = alternativeController;
             try {
               await alternativeController.initialize();
@@ -201,11 +233,15 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     final transformationPart = parts.first;
     final versionPart = parts[1];
 
-    final hasTransformation = RegExp(r'^(q_auto|f_[a-z0-9]+|vc_[a-z0-9]+|ac_[a-z0-9]+|fl_[a-z0-9]+|sp_[a-z0-9]+,?)').hasMatch(transformationPart);
+    final hasTransformation = RegExp(
+      r'^(q_auto|f_[a-z0-9]+|vc_[a-z0-9]+|ac_[a-z0-9]+|fl_[a-z0-9]+|sp_[a-z0-9]+,?)',
+    ).hasMatch(transformationPart);
     final hasVersion = RegExp(r'^v\d+$').hasMatch(versionPart);
 
     if (hasTransformation && hasVersion) {
-      final normalizedPath = uri.path.substring(0, prefixIndex + uploadPrefix.length) + parts.sublist(1).join('/');
+      final normalizedPath =
+          uri.path.substring(0, prefixIndex + uploadPrefix.length) +
+          parts.sublist(1).join('/');
       return uri.replace(path: normalizedPath).toString();
     }
 
@@ -231,7 +267,9 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
             }
           } catch (_) {}
         } else {
-          await entry.value.setVolume(0.0); // كتم لحظي لمنع التداخل أثناء الإيقاف
+          await entry.value.setVolume(
+            0.0,
+          ); // كتم لحظي لمنع التداخل أثناء الإيقاف
           await entry.value.pause();
         }
       }
@@ -270,11 +308,16 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
   void _updateSaveCount(String videoId, bool added) {
     setState(() {
       final current = _saveCounts[videoId] ?? 0;
-      _saveCounts[videoId] = added ? current + 1 : (current > 0 ? current - 1 : 0);
+      _saveCounts[videoId] = added
+          ? current + 1
+          : (current > 0 ? current - 1 : 0);
     });
   }
 
-  Future<void> _showReactionOptions(BuildContext context, AtyaafVideo video) async {
+  Future<void> _showReactionOptions(
+    BuildContext context,
+    AtyaafVideo video,
+  ) async {
     final chosenEmoji = await showModalBottomSheet<String>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -292,9 +335,15 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
               ),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(28),
+              ),
               boxShadow: [
-                BoxShadow(color: Colors.black.withValues(alpha: 0.25), blurRadius: 20, offset: const Offset(0, -8)),
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.25),
+                  blurRadius: 20,
+                  offset: const Offset(0, -8),
+                ),
               ],
             ),
             child: Column(
@@ -309,9 +358,20 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                const Text('اختر رد فعل', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+                const Text(
+                  'اختر رد فعل',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
                 const SizedBox(height: 8),
-                const Text('انقر على الإيموجي المفضل لديك لتفاعل رائع', style: TextStyle(fontSize: 14, color: Colors.white70), textAlign: TextAlign.center),
+                const Text(
+                  'انقر على الإيموجي المفضل لديك لتفاعل رائع',
+                  style: TextStyle(fontSize: 14, color: Colors.white70),
+                  textAlign: TextAlign.center,
+                ),
                 const SizedBox(height: 18),
                 Wrap(
                   spacing: 14,
@@ -328,12 +388,22 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                 ),
                 const SizedBox(height: 20),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: Text('عدد التفاعلات: ${_getReactionCount(video)}', style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
+                  child: Text(
+                    'عدد التفاعلات: ${_getReactionCount(video)}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 12),
               ],
@@ -346,12 +416,18 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     if (chosenEmoji != null) {
       _applyReaction(video.id, chosenEmoji);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم التفاعل بـ $chosenEmoji')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('تم التفاعل بـ $chosenEmoji')));
       }
     }
   }
 
-  Widget _buildEmojiReactionButton(BuildContext context, String emoji, String label) {
+  Widget _buildEmojiReactionButton(
+    BuildContext context,
+    String emoji,
+    String label,
+  ) {
     return InkWell(
       borderRadius: BorderRadius.circular(24),
       onTap: () => Navigator.pop(context, emoji),
@@ -362,7 +438,11 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
           color: Colors.white,
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
-            BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 12, offset: const Offset(0, 6)),
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
           ],
         ),
         child: Column(
@@ -371,7 +451,14 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
           children: [
             Text(emoji, style: const TextStyle(fontSize: 34)),
             const SizedBox(height: 8),
-            Text(label, style: const TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.w600)),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.black87,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       ),
@@ -394,7 +481,9 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     final currentUser = authProvider.currentUser;
 
     if (currentUser == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('يجب تسجيل الدخول أولاً قبل رفع الريل')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يجب تسجيل الدخول أولاً قبل رفع الريل')),
+      );
       return;
     }
 
@@ -414,7 +503,10 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('إلغاء')),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('إلغاء'),
+            ),
             ElevatedButton(
               onPressed: () => Navigator.pop(dialogContext, true),
               child: const Text('اختيار الفيديو'),
@@ -444,7 +536,7 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
       await _uploadService.uploadAndCreateReel(
         videoFile: video,
         userId: currentUser.id,
-        username: currentUser.username, 
+        username: currentUser.username,
         caption: captionController.text.trim(),
         onProgress: (progress) {
           if (!mounted) return;
@@ -455,10 +547,14 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
       if (!mounted) return;
       await _reloadVideos();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم رفع الريل بنجاح ✅')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تم رفع الريل بنجاح ✅')));
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل رفع الريل: $error')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('فشل رفع الريل: $error')));
       }
     } finally {
       if (mounted) {
@@ -488,7 +584,9 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
               children: [
                 if (controller.value.isInitialized)
                   AspectRatio(
-                    aspectRatio: controller.value.aspectRatio > 0 ? controller.value.aspectRatio : 16 / 9,
+                    aspectRatio: controller.value.aspectRatio > 0
+                        ? controller.value.aspectRatio
+                        : 16 / 9,
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(16),
                       child: VideoPlayer(controller),
@@ -497,16 +595,27 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                 else
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 24),
-                    child: Text('تعذر معاينة هذا الفيديو الآن، لكن يمكنك المتابعة إلى الرفع.'),
+                    child: Text(
+                      'تعذر معاينة هذا الفيديو الآن، لكن يمكنك المتابعة إلى الرفع.',
+                    ),
                   ),
                 const SizedBox(height: 12),
-                const Text('سيتم رفع الفيديو إلى الخادم ثم حفظ الرابط.', textAlign: TextAlign.center),
+                const Text(
+                  'سيتم رفع الفيديو إلى الخادم ثم حفظ الرابط.',
+                  textAlign: TextAlign.center,
+                ),
               ],
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('إلغاء')),
-            ElevatedButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('متابعة الرفع')),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('متابعة الرفع'),
+            ),
           ],
         );
       },
@@ -517,7 +626,10 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     return confirmed == true;
   }
 
-  Future<void> _showShareOptions(BuildContext context, AtyaafVideo video) async {
+  Future<void> _showShareOptions(
+    BuildContext context,
+    AtyaafVideo video,
+  ) async {
     final shareText = _buildShareText(video);
     await showModalBottomSheet<void>(
       context: context,
@@ -538,7 +650,10 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
               runSpacing: 8,
               children: [
                 const Center(
-                  child: Text('مشاركة الريل', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  child: Text(
+                    'مشاركة الريل',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 _buildShareOption(
@@ -586,9 +701,15 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                   label: 'نسخ الرابط',
                   onTap: () async {
                     Navigator.pop(context);
-                    await Clipboard.setData(ClipboardData(text: video.videoUrl));
+                    await Clipboard.setData(
+                      ClipboardData(text: video.videoUrl),
+                    );
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نسخ الرابط إلى الحافظة')));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('تم نسخ الرابط إلى الحافظة'),
+                        ),
+                      );
                     }
                   },
                 ),
@@ -598,7 +719,10 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                   onTap: () async {
                     Navigator.pop(context);
                     // ignore: deprecated_member_use
-                    await Share.share(shareText, subject: _buildShareSubject(video));
+                    await Share.share(
+                      shareText,
+                      subject: _buildShareSubject(video),
+                    );
                   },
                 ),
               ],
@@ -609,10 +733,17 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     );
   }
 
-  Widget _buildShareOption({required IconData icon, required String label, required VoidCallback onTap}) {
+  Widget _buildShareOption({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
     return ListTile(
       leading: Icon(icon, color: const Color(0xFFE94057)),
-      title: Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+      title: Text(
+        label,
+        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+      ),
       trailing: const Icon(Icons.keyboard_arrow_left),
       onTap: onTap,
     );
@@ -643,26 +774,41 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     final whatsappUri = Uri.parse('https://wa.me/?text=$encoded');
     if (!await _openUrl(whatsappUri)) {
       // ignore: deprecated_member_use
-      await Share.share(_buildShareText(video), subject: _buildShareSubject(video));
+      await Share.share(
+        _buildShareText(video),
+        subject: _buildShareSubject(video),
+      );
     }
   }
 
   Future<void> _shareViaFacebook(AtyaafVideo video) async {
     final encodedUrl = Uri.encodeComponent(video.videoUrl);
-    final encodedQuote = Uri.encodeComponent(video.caption.isNotEmpty ? video.caption : video.title);
-    final facebookUri = Uri.parse('https://www.facebook.com/sharer/sharer.php?u=$encodedUrl&quote=$encodedQuote');
+    final encodedQuote = Uri.encodeComponent(
+      video.caption.isNotEmpty ? video.caption : video.title,
+    );
+    final facebookUri = Uri.parse(
+      'https://www.facebook.com/sharer/sharer.php?u=$encodedUrl&quote=$encodedQuote',
+    );
     if (!await _openUrl(facebookUri)) {
       // ignore: deprecated_member_use
-      await Share.share(_buildShareText(video), subject: _buildShareSubject(video));
+      await Share.share(
+        _buildShareText(video),
+        subject: _buildShareSubject(video),
+      );
     }
   }
 
   Future<void> _shareViaTwitter(AtyaafVideo video) async {
     final encoded = Uri.encodeComponent(_buildShareText(video));
-    final twitterUri = Uri.parse('https://twitter.com/intent/tweet?text=$encoded');
+    final twitterUri = Uri.parse(
+      'https://twitter.com/intent/tweet?text=$encoded',
+    );
     if (!await _openUrl(twitterUri)) {
       // ignore: deprecated_member_use
-      await Share.share(_buildShareText(video), subject: _buildShareSubject(video));
+      await Share.share(
+        _buildShareText(video),
+        subject: _buildShareSubject(video),
+      );
     }
   }
 
@@ -671,13 +817,19 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     final instagramUri = Uri.parse(instagramScheme);
     if (!await _openUrl(instagramUri)) {
       // ignore: deprecated_member_use
-      await Share.share(_buildShareText(video), subject: _buildShareSubject(video));
+      await Share.share(
+        _buildShareText(video),
+        subject: _buildShareSubject(video),
+      );
     }
   }
 
   Future<void> _shareViaTikTok(AtyaafVideo video) async {
     // ignore: deprecated_member_use
-    await Share.share(_buildShareText(video), subject: _buildShareSubject(video));
+    await Share.share(
+      _buildShareText(video),
+      subject: _buildShareSubject(video),
+    );
   }
 
   VideoPlayerController _buildPreviewController(XFile videoFile) {
@@ -700,7 +852,10 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     return VideoPlayerController.file(File(videoFile.path));
   }
 
-  Future<void> _showCommentsSheet(BuildContext context, AtyaafVideo video) async {
+  Future<void> _showCommentsSheet(
+    BuildContext context,
+    AtyaafVideo video,
+  ) async {
     final commentController = TextEditingController();
     try {
       await showModalBottomSheet(
@@ -718,14 +873,29 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                   height: MediaQuery.of(context).size.height * 0.65,
                   decoration: const BoxDecoration(
                     color: Colors.white,
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                    borderRadius: BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
                   ),
                   child: Column(
                     children: [
                       const SizedBox(height: 12),
-                      Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
                       const SizedBox(height: 16),
-                      const Text('التعليقات', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      const Text(
+                        'التعليقات',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                       const Divider(),
                       Expanded(
                         child: Center(
@@ -733,34 +903,57 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.chat_bubble_outline, size: 50, color: Colors.grey[400]),
+                              Icon(
+                                Icons.chat_bubble_outline,
+                                size: 50,
+                                color: Colors.grey[400],
+                              ),
                               const SizedBox(height: 10),
-                              Text('كن أول من يترك تعليقاً!', style: TextStyle(color: Colors.grey[600])),
+                              Text(
+                                'كن أول من يترك تعليقاً!',
+                                style: TextStyle(color: Colors.grey[600]),
+                              ),
                             ],
                           ),
                         ),
                       ),
                       Container(
                         padding: EdgeInsets.only(
-                          left: 16, right: 16, top: 12,
-                          bottom: MediaQuery.of(context).viewInsets.bottom + 12
+                          left: 16,
+                          right: 16,
+                          top: 12,
+                          bottom: MediaQuery.of(context).viewInsets.bottom + 12,
                         ),
                         decoration: BoxDecoration(
                           color: Colors.white,
-                          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 10, offset: const Offset(0, -5))],
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.05),
+                              blurRadius: 10,
+                              offset: const Offset(0, -5),
+                            ),
+                          ],
                         ),
                         child: Row(
                           children: [
                             Expanded(
                               child: TextField(
                                 controller: commentController,
-                                onChanged: (val) => setModalState(() => isTyping = val.trim().isNotEmpty),
+                                onChanged: (val) => setModalState(
+                                  () => isTyping = val.trim().isNotEmpty,
+                                ),
                                 decoration: InputDecoration(
                                   hintText: 'أضف تعليقاً...',
                                   filled: true,
                                   fillColor: Colors.grey[100],
-                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(20),
+                                    borderSide: BorderSide.none,
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 10,
+                                  ),
                                 ),
                               ),
                             ),
@@ -770,16 +963,28 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                                 if (isTyping) {
                                   commentController.clear();
                                   setModalState(() => isTyping = false);
-                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال التعليق')));
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('تم إرسال التعليق'),
+                                    ),
+                                  );
                                 } else {
-                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اضغط مطولاً لتسجيل رسالة صوتية 🎤')));
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'اضغط مطولاً لتسجيل رسالة صوتية 🎤',
+                                      ),
+                                    ),
+                                  );
                                 }
                               },
                               child: AnimatedContainer(
                                 duration: const Duration(milliseconds: 200),
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
-                                  color: isTyping ? const Color(0xFF5B6CFF) : const Color(0xFF2EC7A5),
+                                  color: isTyping
+                                      ? const Color(0xFF5B6CFF)
+                                      : const Color(0xFF2EC7A5),
                                   shape: BoxShape.circle,
                                 ),
                                 child: Icon(
@@ -813,7 +1018,9 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     if (provider.isLoading && provider.videos.isEmpty) {
       return const Scaffold(
         backgroundColor: Colors.black,
-        body: Center(child: CircularProgressIndicator(color: Color(0xFFE94057))),
+        body: Center(
+          child: CircularProgressIndicator(color: Color(0xFFE94057)),
+        ),
       );
     }
 
@@ -827,27 +1034,60 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
             children: [
               Container(
                 padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.white.withValues(alpha: 0.05)),
-                child: const Icon(Icons.video_library_rounded, size: 80, color: Color(0xFFE94057)),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.05),
+                ),
+                child: const Icon(
+                  Icons.video_library_rounded,
+                  size: 80,
+                  color: Color(0xFFE94057),
+                ),
               ),
               const SizedBox(height: 24),
-              const Text('لا توجد مقاطع أطياف بعد', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+              const Text(
+                'لا توجد مقاطع أطياف بعد',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               const SizedBox(height: 12),
-              const Text('كن أول من يشارك لحظاته وإبداعاته\nمع مجتمع زامل!', textAlign: TextAlign.center, style: TextStyle(color: Colors.grey, fontSize: 16)),
+              const Text(
+                'كن أول من يشارك لحظاته وإبداعاته\nمع مجتمع زامل!',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey, fontSize: 16),
+              ),
               const SizedBox(height: 32),
               ElevatedButton.icon(
                 onPressed: _isUploadingReel ? null : () => _uploadReel(context),
                 icon: _isUploadingReel
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
                     : const Icon(Icons.upload_rounded, color: Colors.white),
                 label: Text(
                   _isUploadingReel ? 'جاري الرفع...' : 'رفع أول مقطع الآن',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFFE94057),
-                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 28,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
                 ),
               ),
             ],
@@ -880,8 +1120,7 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
             itemCount: provider.videos.length,
             onPageChanged: (index) async {
               setState(() => _currentIndex = index);
-              await _prepareControllersForIndex(index);
-              await _playCurrentVideo();
+              await _activateVideo(index);
             },
             itemBuilder: (context, index) {
               final video = provider.videos[index];
@@ -902,12 +1141,18 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                 onSave: () async {
                   if (authProvider.currentUser == null) return;
                   final wasSaved = provider.isSaved(video.id);
-                  await provider.toggleSave(userId: authProvider.currentUser!.id, video: video);
+                  await provider.toggleSave(
+                    userId: authProvider.currentUser!.id,
+                    video: video,
+                  );
                   await provider.syncSavedVideos(authProvider.currentUser!.id);
                   _updateSaveCount(video.id, !wasSaved);
                 },
                 onRelatedContent: () async {
-                  await provider.openRelatedContent(context, video.relatedContentRef);
+                  await provider.openRelatedContent(
+                    context,
+                    video.relatedContentRef,
+                  );
                 },
                 onComment: () => _showCommentsSheet(context, video),
                 onShare: () {
@@ -923,21 +1168,33 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
               );
             },
           ),
-          
+
           SafeArea(
             child: Directionality(
               textDirection: TextDirection.rtl,
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16.0,
+                  vertical: 12.0,
+                ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     const Text(
-                      'أطياف', 
-                      style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold, shadows: [Shadow(color: Colors.black54, blurRadius: 10)])
+                      'أطياف',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        shadows: [
+                          Shadow(color: Colors.black54, blurRadius: 10),
+                        ],
+                      ),
                     ),
                     GestureDetector(
-                      onTap: _isUploadingReel ? null : () => _uploadReel(context),
+                      onTap: _isUploadingReel
+                          ? null
+                          : () => _uploadReel(context),
                       child: Container(
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
@@ -1049,10 +1306,15 @@ class _AtyaafVideoCardState extends State<_AtyaafVideoCard> {
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
-                child: Text('عذراً، فشل تحميل الفيديو: ${widget.initError}', style: const TextStyle(color: Colors.redAccent), textAlign: TextAlign.center),
+                child: Text(
+                  'عذراً، فشل تحميل الفيديو: ${widget.initError}',
+                  style: const TextStyle(color: Colors.redAccent),
+                  textAlign: TextAlign.center,
+                ),
               ),
             )
-          else if (widget.controller != null && widget.controller!.value.isInitialized)
+          else if (widget.controller != null &&
+              widget.controller!.value.isInitialized)
             Stack(
               fit: StackFit.expand,
               children: [
@@ -1085,7 +1347,11 @@ class _AtyaafVideoCardState extends State<_AtyaafVideoCard> {
                           color: Colors.black.withValues(alpha: 0.45),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.play_arrow, color: Colors.white, size: 40),
+                        child: const Icon(
+                          Icons.play_arrow,
+                          color: Colors.white,
+                          size: 40,
+                        ),
                       ),
                     ),
                   ),
@@ -1108,8 +1374,10 @@ class _AtyaafVideoCardState extends State<_AtyaafVideoCard> {
               ],
             )
           else
-            const Center(child: CircularProgressIndicator(color: Color(0xFFE94057))),
-          
+            const Center(
+              child: CircularProgressIndicator(color: Color(0xFFE94057)),
+            ),
+
           Positioned(
             right: 16,
             bottom: 100,
@@ -1143,7 +1411,11 @@ class _AtyaafVideoCardState extends State<_AtyaafVideoCard> {
                 ),
                 if (widget.isOwner) ...[
                   const SizedBox(height: 16),
-                  _buildActionButton(Icons.delete, widget.onDelete, color: Colors.redAccent),
+                  _buildActionButton(
+                    Icons.delete,
+                    widget.onDelete,
+                    color: Colors.redAccent,
+                  ),
                 ],
               ],
             ),
@@ -1155,13 +1427,26 @@ class _AtyaafVideoCardState extends State<_AtyaafVideoCard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('@${widget.video.username}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                Text(
+                  '@${widget.video.username}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
                 const SizedBox(height: 8),
                 // ignore: unnecessary_null_comparison, unnecessary_non_null_assertion
-                if (widget.video.caption != null && widget.video.caption!.isNotEmpty)
+                if (widget.video.caption != null &&
+                    widget.video.caption!.isNotEmpty)
                   SizedBox(
                     width: MediaQuery.of(context).size.width * 0.6,
-                    child: Text(widget.video.caption!, style: const TextStyle(color: Colors.white), maxLines: 2, overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      widget.video.caption!,
+                      style: const TextStyle(color: Colors.white),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
               ],
             ),
@@ -1171,14 +1456,16 @@ class _AtyaafVideoCardState extends State<_AtyaafVideoCard> {
     );
   }
 
-  Widget _buildActionButton(IconData icon, VoidCallback onTap, {Color color = Colors.white}) {
+  Widget _buildActionButton(
+    IconData icon,
+    VoidCallback onTap, {
+    Color color = Colors.white,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, color: color, size: 32),
-        ],
+        children: [Icon(icon, color: color, size: 32)],
       ),
     );
   }
@@ -1200,17 +1487,32 @@ class _AtyaafVideoCardState extends State<_AtyaafVideoCard> {
             width: 54,
             height: 54,
             decoration: BoxDecoration(
-              color: active ? const Color(0xFFE94057) : Colors.black.withValues(alpha: 0.55),
+              color: active
+                  ? const Color(0xFFE94057)
+                  : Colors.black.withValues(alpha: 0.55),
               shape: BoxShape.circle,
             ),
             child: Icon(icon, color: Colors.white, size: 28),
           ),
           const SizedBox(height: 6),
-          Text(label, style: const TextStyle(color: Colors.white, fontSize: 12)),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+          ),
           const SizedBox(height: 4),
-          Text('$count', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+          Text(
+            '$count',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           if (extraLabel != null)
-            Text(extraLabel, style: const TextStyle(color: Colors.amber, fontSize: 12)),
+            Text(
+              extraLabel,
+              style: const TextStyle(color: Colors.amber, fontSize: 12),
+            ),
         ],
       ),
     );

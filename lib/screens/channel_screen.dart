@@ -15,6 +15,7 @@ import '../providers/auth_provider.dart';
 import '../services/channel_service.dart';
 import '../services/media_service.dart';
 import '../services/audio_service.dart';
+import '../widgets/media_preview.dart';
 
 class ChannelScreen extends StatefulWidget {
   final String channelId;
@@ -28,12 +29,13 @@ class _ChannelScreenState extends State<ChannelScreen> {
   final ChannelService _channelService = ChannelService();
   final MediaService _mediaService = MediaService();
   final AudioCommentService _audioService = AudioCommentService();
-  
+
   final TextEditingController _textController = TextEditingController();
   final ImagePicker _imagePicker = ImagePicker();
-  
+
   bool _isPublishing = false;
   bool _isRecording = false;
+  bool _isUpdatingChannelImage = false;
   double _uploadProgress = 0.0; // 🔥 متغير جديد لمتابعة نسبة الرفع بدقة
 
   @override
@@ -48,7 +50,10 @@ class _ChannelScreenState extends State<ChannelScreen> {
     try {
       final canRecord = await _audioService.checkPermission();
       if (!canRecord) {
-        if(mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('صلاحية الميكروفون مطلوبة')));
+        if (mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('صلاحية الميكروفون مطلوبة')),
+          );
         return;
       }
       final path = await _audioService.startRecording();
@@ -58,7 +63,10 @@ class _ChannelScreenState extends State<ChannelScreen> {
     }
   }
 
-  Future<void> _stopRecordingAndSend(String currentUserId, String currentUserName) async {
+  Future<void> _stopRecordingAndSend(
+    String currentUserId,
+    String currentUserName,
+  ) async {
     try {
       final path = await _audioService.stopRecording();
       setState(() => _isRecording = false);
@@ -67,19 +75,33 @@ class _ChannelScreenState extends State<ChannelScreen> {
       final shouldSend = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
           title: const Text('مراجعة التسجيل الصوتي'),
           content: const Text('هل تريد إرسال التسجيل الصوتي للقناة؟'),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
-            TextButton(onPressed: () async => await _audioService.play(path), child: const Text('استماع')),
-            ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B6CFF)), onPressed: () => Navigator.pop(context, true), child: const Text('إرسال')),
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('إلغاء'),
+            ),
+            TextButton(
+              onPressed: () async => await _audioService.play(path),
+              child: const Text('استماع'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF5B6CFF),
+              ),
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('إرسال'),
+            ),
           ],
         ),
       );
 
       if (shouldSend != true) return;
-      
+
       setState(() {
         _isPublishing = true;
         _uploadProgress = 0.0;
@@ -95,13 +117,16 @@ class _ChannelScreenState extends State<ChannelScreen> {
         // 🔥 استخدام XFile مع دعم مؤشر الرفع للصوتيات
         final localXFile = XFile(path);
         final uploadResult = await _mediaService.uploadXFileWithResult(
-          localXFile, 
+          localXFile,
           isVideo: false,
           onProgress: (progress) {
-            if (mounted) setState(() => _uploadProgress = progress.percentComplete);
+            if (mounted)
+              setState(() => _uploadProgress = progress.percentComplete);
           },
         );
-        if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
+        if (!uploadResult.success ||
+            uploadResult.url == null ||
+            uploadResult.url!.isEmpty) {
           throw Exception(uploadResult.error ?? 'فشل رفع التسجيل الصوتي');
         }
         uploadedUrl = uploadResult.url!;
@@ -110,26 +135,37 @@ class _ChannelScreenState extends State<ChannelScreen> {
 
       if (uploadedUrl.isNotEmpty) {
         await _channelService.publishMessage(
-          channelId: widget.channelId, 
-          senderId: currentUserId, 
-          senderName: currentUserName, 
-          text: '🎤 مقطع صوتي', 
-          mediaUrl: uploadedUrl, 
+          channelId: widget.channelId,
+          senderId: currentUserId,
+          senderName: currentUserName,
+          text: '🎤 مقطع صوتي',
+          mediaUrl: uploadedUrl,
           mediaType: finalMediaType,
+          clientRequestId:
+              '${widget.channelId}_${DateTime.now().microsecondsSinceEpoch}',
         );
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل الإرسال: $e')));
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('فشل الإرسال: $e')));
     } finally {
-      if (mounted) setState(() {
-        _isPublishing = false;
-        _uploadProgress = 0.0;
-      });
+      if (mounted)
+        setState(() {
+          _isPublishing = false;
+          _uploadProgress = 0.0;
+        });
     }
   }
 
   // --- خيارات الضغط المطول ---
-  void _showLongPressOptions(BuildContext context, ChannelMessage message, String currentUserId, bool isAdmin) {
+  void _showLongPressOptions(
+    BuildContext context,
+    ChannelMessage message,
+    String currentUserId,
+    bool isAdmin,
+  ) {
     if (currentUserId.isEmpty) return;
     final emojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 
@@ -139,16 +175,25 @@ class _ChannelScreenState extends State<ChannelScreen> {
       builder: (ctx) => Container(
         margin: const EdgeInsets.all(16),
         padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, borderRadius: BorderRadius.circular(30)),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          borderRadius: BorderRadius.circular(30),
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (isAdmin) ...[
               ListTile(
                 leading: const Icon(Icons.push_pin, color: Colors.blue),
-                title: const Text('تثبيت الرسالة', style: TextStyle(fontWeight: FontWeight.bold)),
+                title: const Text(
+                  'تثبيت الرسالة',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
                 onTap: () {
-                  _channelService.pinMessage(channelId: widget.channelId, messageId: message.id);
+                  _channelService.pinMessage(
+                    channelId: widget.channelId,
+                    messageId: message.id,
+                  );
                   Navigator.pop(ctx);
                 },
               ),
@@ -158,13 +203,25 @@ class _ChannelScreenState extends State<ChannelScreen> {
               padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: emojis.map((emoji) => GestureDetector(
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _channelService.toggleReaction(channelId: widget.channelId, messageId: message.id, emoji: emoji, userId: currentUserId);
-                  },
-                  child: Text(emoji, style: const TextStyle(fontSize: 32)),
-                )).toList(),
+                children: emojis
+                    .map(
+                      (emoji) => GestureDetector(
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          _channelService.toggleReaction(
+                            channelId: widget.channelId,
+                            messageId: message.id,
+                            emoji: emoji,
+                            userId: currentUserId,
+                          );
+                        },
+                        child: Text(
+                          emoji,
+                          style: const TextStyle(fontSize: 32),
+                        ),
+                      ),
+                    )
+                    .toList(),
               ),
             ),
           ],
@@ -175,7 +232,8 @@ class _ChannelScreenState extends State<ChannelScreen> {
 
   Widget _buildReactionsWidget(ChannelMessage message, String currentUserId) {
     return Wrap(
-      spacing: 6, runSpacing: 6,
+      spacing: 6,
+      runSpacing: 6,
       children: message.reactions.entries.map((entry) {
         final emoji = entry.key;
         final users = List<String>.from(entry.value);
@@ -184,15 +242,28 @@ class _ChannelScreenState extends State<ChannelScreen> {
         if (count == 0) return const SizedBox.shrink();
 
         return InkWell(
-          onTap: currentUserId.isNotEmpty ? () {
-            _channelService.toggleReaction(channelId: widget.channelId, messageId: message.id, emoji: emoji, userId: currentUserId);
-          } : null,
+          onTap: currentUserId.isNotEmpty
+              ? () {
+                  _channelService.toggleReaction(
+                    channelId: widget.channelId,
+                    messageId: message.id,
+                    emoji: emoji,
+                    userId: currentUserId,
+                  );
+                }
+              : null,
           borderRadius: BorderRadius.circular(20),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-              color: iReacted ? const Color(0xFF5B6CFF).withOpacity(0.1) : Colors.grey.shade100,
-              border: Border.all(color: iReacted ? const Color(0xFF5B6CFF).withOpacity(0.5) : Colors.grey.shade300),
+              color: iReacted
+                  ? const Color(0xFF5B6CFF).withOpacity(0.1)
+                  : Colors.grey.shade100,
+              border: Border.all(
+                color: iReacted
+                    ? const Color(0xFF5B6CFF).withOpacity(0.5)
+                    : Colors.grey.shade300,
+              ),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Row(
@@ -200,7 +271,14 @@ class _ChannelScreenState extends State<ChannelScreen> {
               children: [
                 Text(emoji, style: const TextStyle(fontSize: 14)),
                 const SizedBox(width: 4),
-                Text(count.toString(), style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: iReacted ? const Color(0xFF5B6CFF) : Colors.black87)),
+                Text(
+                  count.toString(),
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: iReacted ? const Color(0xFF5B6CFF) : Colors.black87,
+                  ),
+                ),
               ],
             ),
           ),
@@ -210,25 +288,53 @@ class _ChannelScreenState extends State<ChannelScreen> {
   }
 
   void _openCommentsSheet(ChannelMessage message) {
-    showModalBottomSheet(context: context, isScrollControlled: true, backgroundColor: Colors.transparent, builder: (context) => _CommentsSheet(channelId: widget.channelId, parentMessage: message));
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) =>
+          _CommentsSheet(channelId: widget.channelId, parentMessage: message),
+    );
   }
 
   Widget _buildPinnedMessageBanner(Channel channel) {
     return FutureBuilder<ChannelMessage?>(
-      future: _channelService.getMessage(channelId: widget.channelId, messageId: channel.pinnedMessageId),
+      future: _channelService.getMessage(
+        channelId: widget.channelId,
+        messageId: channel.pinnedMessageId,
+      ),
       builder: (context, snapshot) {
-        if (!snapshot.hasData || snapshot.data == null) return const SizedBox.shrink();
+        if (!snapshot.hasData || snapshot.data == null)
+          return const SizedBox.shrink();
         final msg = snapshot.data!;
-        
+
         return Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(color: Colors.blue.shade50, border: Border(bottom: BorderSide(color: Colors.blue.shade100))),
+          decoration: BoxDecoration(
+            color: Colors.blue.shade50,
+            border: Border(bottom: BorderSide(color: Colors.blue.shade100)),
+          ),
           child: Row(
             children: [
               const Icon(Icons.push_pin, size: 16, color: Colors.blue),
               const SizedBox(width: 8),
-              Expanded(child: Text(msg.text.isNotEmpty ? msg.text : 'رسالة مثبتة', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.blue))),
-              IconButton(icon: const Icon(Icons.close, size: 16), onPressed: () => _channelService.unpinMessage(channelId: widget.channelId))
+              Expanded(
+                child: Text(
+                  msg.text.isNotEmpty ? msg.text : 'رسالة مثبتة',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: Colors.blue,
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close, size: 16),
+                onPressed: () =>
+                    _channelService.unpinMessage(channelId: widget.channelId),
+              ),
             ],
           ),
         );
@@ -241,42 +347,82 @@ class _ChannelScreenState extends State<ChannelScreen> {
     final questionController = TextEditingController();
     final option1Controller = TextEditingController();
     final option2Controller = TextEditingController();
-    
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('إنشاء استطلاع رأي', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+        title: const Text(
+          'إنشاء استطلاع رأي',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+        ),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(controller: questionController, decoration: const InputDecoration(labelText: 'السؤال', border: OutlineInputBorder())),
+              TextField(
+                controller: questionController,
+                decoration: const InputDecoration(
+                  labelText: 'السؤال',
+                  border: OutlineInputBorder(),
+                ),
+              ),
               const SizedBox(height: 12),
-              TextField(controller: option1Controller, decoration: const InputDecoration(labelText: 'الخيار الأول', border: OutlineInputBorder())),
+              TextField(
+                controller: option1Controller,
+                decoration: const InputDecoration(
+                  labelText: 'الخيار الأول',
+                  border: OutlineInputBorder(),
+                ),
+              ),
               const SizedBox(height: 8),
-              TextField(controller: option2Controller, decoration: const InputDecoration(labelText: 'الخيار الثاني', border: OutlineInputBorder())),
+              TextField(
+                controller: option2Controller,
+                decoration: const InputDecoration(
+                  labelText: 'الخيار الثاني',
+                  border: OutlineInputBorder(),
+                ),
+              ),
               const SizedBox(height: 8),
-              const Text('ملاحظة: يدعم الاستطلاع حالياً خيارين أساسيين.', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const Text(
+                'ملاحظة: يدعم الاستطلاع حالياً خيارين أساسيين.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
             ],
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B6CFF)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF5B6CFF),
+            ),
             onPressed: () {
               final q = questionController.text.trim();
               final o1 = option1Controller.text.trim();
               final o2 = option2Controller.text.trim();
-              
+
               if (q.isNotEmpty && o1.isNotEmpty && o2.isNotEmpty) {
-                _channelService.publishPoll(channelId: widget.channelId, senderId: userId, senderName: userName, question: q, options: [o1, o2]);
+                _channelService.publishPoll(
+                  channelId: widget.channelId,
+                  senderId: userId,
+                  senderName: userName,
+                  question: q,
+                  options: [o1, o2],
+                );
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نشر الاستطلاع')));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('تم نشر الاستطلاع')),
+                );
               }
             },
-            child: const Text('نشر الاستطلاع', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'نشر الاستطلاع',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -288,7 +434,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
     final extraData = message.extraData;
     final question = extraData['pollQuestion'] as String? ?? 'استطلاع';
     final options = List<dynamic>.from(extraData['pollOptions'] ?? []);
-    
+
     int totalVotes = 0;
     for (var opt in options) {
       totalVotes += List<String>.from(opt['votes'] ?? []).length;
@@ -297,7 +443,11 @@ class _ChannelScreenState extends State<ChannelScreen> {
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFF5B6CFF).withOpacity(0.3))),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF5B6CFF).withOpacity(0.3)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -305,7 +455,15 @@ class _ChannelScreenState extends State<ChannelScreen> {
             children: [
               const Icon(Icons.poll, color: Color(0xFF5B6CFF)),
               const SizedBox(width: 8),
-              Expanded(child: Text(question, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+              Expanded(
+                child: Text(
+                  question,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -318,17 +476,39 @@ class _ChannelScreenState extends State<ChannelScreen> {
             final iVoted = votes.contains(currentUserId);
 
             return GestureDetector(
-              onTap: currentUserId.isNotEmpty ? () {
-                _channelService.voteOnPoll(channelId: widget.channelId, messageId: message.id, optionId: optionId, userId: currentUserId);
-              } : null,
+              onTap: currentUserId.isNotEmpty
+                  ? () {
+                      _channelService.voteOnPoll(
+                        channelId: widget.channelId,
+                        messageId: message.id,
+                        optionId: optionId,
+                        userId: currentUserId,
+                      );
+                    }
+                  : null,
               child: Container(
                 margin: const EdgeInsets.only(bottom: 8),
                 child: Stack(
                   children: [
-                    Container(height: 40, width: double.infinity, decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(8))),
+                    Container(
+                      height: 40,
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
                     FractionallySizedBox(
                       widthFactor: percentage,
-                      child: Container(height: 40, decoration: BoxDecoration(color: iVoted ? const Color(0xFF5B6CFF).withOpacity(0.3) : const Color(0xFF5B6CFF).withOpacity(0.1), borderRadius: BorderRadius.circular(8))),
+                      child: Container(
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: iVoted
+                              ? const Color(0xFF5B6CFF).withOpacity(0.3)
+                              : const Color(0xFF5B6CFF).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
                     ),
                     Positioned.fill(
                       child: Padding(
@@ -336,8 +516,23 @@ class _ChannelScreenState extends State<ChannelScreen> {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Expanded(child: Text(text, style: TextStyle(fontWeight: iVoted ? FontWeight.bold : FontWeight.normal))),
-                            Text('${(percentage * 100).toInt()}%', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                            Expanded(
+                              child: Text(
+                                text,
+                                style: TextStyle(
+                                  fontWeight: iVoted
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '${(percentage * 100).toInt()}%',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.black54,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -348,14 +543,20 @@ class _ChannelScreenState extends State<ChannelScreen> {
             );
           }).toList(),
           const SizedBox(height: 4),
-          Text('$totalVotes أصوات', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+          Text(
+            '$totalVotes أصوات',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
         ],
       ),
     );
   }
 
   Widget _buildChannelComposer(Channel channel, dynamic currentUser) {
-    final canPost = !channel.isReadOnly || currentUser?.id == channel.adminId || channel.moderators.contains(currentUser?.id ?? '');
+    final canPost =
+        !channel.isReadOnly ||
+        currentUser?.id == channel.adminId ||
+        channel.moderators.contains(currentUser?.id ?? '');
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
@@ -373,7 +574,9 @@ class _ChannelScreenState extends State<ChannelScreen> {
                 shape: BoxShape.circle,
               ),
               child: IconButton(
-                onPressed: _isPublishing ? null : () => _publishTextMessage(currentUser),
+                onPressed: _isPublishing
+                    ? null
+                    : () => _publishTextMessage(currentUser),
                 // 🔥 التعديل الجمالي لدعم عرض شريط التحميل بوضوح للمستخدم
                 icon: _isPublishing
                     ? SizedBox(
@@ -402,22 +605,63 @@ class _ChannelScreenState extends State<ChannelScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   IconButton(
-                    onPressed: _isPublishing ? null : () => _pickAndPublishMedia(context, currentUser?.id ?? ''),
-                    icon: const Icon(Icons.image_outlined, color: Color(0xFF5B6CFF)),
+                    onPressed: _isPublishing
+                        ? null
+                        : () => _pickAndPublishMedia(
+                            context,
+                            currentUser?.id ?? '',
+                          ),
+                    icon: const Icon(
+                      Icons.image_outlined,
+                      color: Color(0xFF5B6CFF),
+                    ),
                   ),
                   IconButton(
-                    onPressed: _isPublishing ? null : () => _showCreatePollDialog(currentUser?.id ?? '', currentUser?.username ?? 'admin'),
-                    icon: const Icon(Icons.poll_outlined, color: Color(0xFF5B6CFF)),
+                    onPressed: _isPublishing
+                        ? null
+                        : () => _pickAndPublishMedia(
+                            context,
+                            currentUser?.id ?? '',
+                            isVideo: true,
+                          ),
+                    icon: const Icon(
+                      Icons.video_library_outlined,
+                      color: Color(0xFF5B6CFF),
+                    ),
                   ),
                   IconButton(
-                    onPressed: _isPublishing ? null : () {
-                      if (_isRecording) {
-                        _stopRecordingAndSend(currentUser?.id ?? '', currentUser?.username ?? 'admin');
-                      } else {
-                        _startRecording();
-                      }
-                    },
-                    icon: Icon(_isRecording ? Icons.stop_circle_rounded : Icons.mic_none_rounded, color: _isRecording ? Colors.red : const Color(0xFF5B6CFF)),
+                    onPressed: _isPublishing
+                        ? null
+                        : () => _showCreatePollDialog(
+                            currentUser?.id ?? '',
+                            currentUser?.username ?? 'admin',
+                          ),
+                    icon: const Icon(
+                      Icons.poll_outlined,
+                      color: Color(0xFF5B6CFF),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _isPublishing
+                        ? null
+                        : () {
+                            if (_isRecording) {
+                              _stopRecordingAndSend(
+                                currentUser?.id ?? '',
+                                currentUser?.username ?? 'admin',
+                              );
+                            } else {
+                              _startRecording();
+                            }
+                          },
+                    icon: Icon(
+                      _isRecording
+                          ? Icons.stop_circle_rounded
+                          : Icons.mic_none_rounded,
+                      color: _isRecording
+                          ? Colors.red
+                          : const Color(0xFF5B6CFF),
+                    ),
                   ),
                   Expanded(
                     child: ConstrainedBox(
@@ -427,10 +671,16 @@ class _ChannelScreenState extends State<ChannelScreen> {
                         maxLines: null,
                         textDirection: TextDirection.rtl,
                         decoration: InputDecoration(
-                          hintText: canPost ? (_isRecording ? 'جاري التسجيل...' : 'اكتب رسالة...') : 'الوضع للقراءة فقط',
+                          hintText: canPost
+                              ? (_isRecording
+                                    ? 'جاري التسجيل...'
+                                    : 'اكتب رسالة...')
+                              : 'الوضع للقراءة فقط',
                           border: InputBorder.none,
                           isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 12,
+                          ),
                         ),
                         readOnly: _isRecording || !canPost || _isPublishing,
                       ),
@@ -453,7 +703,9 @@ class _ChannelScreenState extends State<ChannelScreen> {
     return Align(
       alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.78),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.of(context).size.width * 0.78,
+        ),
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 4),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -481,36 +733,47 @@ class _ChannelScreenState extends State<ChannelScreen> {
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Text(
                     message.senderName,
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.deepPurple.shade700),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.deepPurple.shade700,
+                    ),
                   ),
                 ),
               if (message.extraData['isPoll'] == true)
                 _buildPollWidget(message, isMine ? 'self' : '')
               else ...[
                 if (message.text.isNotEmpty && message.mediaType != 'audio')
-                  Text(message.text, style: TextStyle(fontSize: 15, color: textColor, height: 1.5)),
+                  Text(
+                    message.text,
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: textColor,
+                      height: 1.5,
+                    ),
+                  ),
                 if (message.mediaUrl.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   if (message.mediaType == 'image')
                     ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: CachedNetworkImage(imageUrl: message.mediaUrl, fit: BoxFit.cover),
+                      child: CachedNetworkImage(
+                        imageUrl: message.mediaUrl,
+                        fit: BoxFit.cover,
+                      ),
                     )
                   else if (message.mediaType == 'video')
-                    Container(
-                      height: 200,
-                      width: 240,
-                      decoration: BoxDecoration(
-                        color: Colors.black87,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Center(child: Icon(Icons.play_circle_fill, color: Colors.white, size: 50)),
+                    MediaPreview(
+                      mediaPath: message.mediaUrl,
+                      mediaType: 'video',
                     )
                   else if (message.mediaType == 'audio')
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: isMine ? Colors.white.withOpacity(0.18) : Colors.grey.shade100,
+                        color: isMine
+                            ? Colors.white.withOpacity(0.18)
+                            : Colors.grey.shade100,
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
@@ -518,14 +781,21 @@ class _ChannelScreenState extends State<ChannelScreen> {
                         children: [
                           const Icon(Icons.mic_rounded, color: Colors.blue),
                           const SizedBox(width: 8),
-                          const Text('مقطع صوتي', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const Text(
+                            'مقطع صوتي',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
                           IconButton(
-                            icon: const Icon(Icons.play_arrow_rounded, color: Color(0xFF5B6CFF)),
-                            onPressed: () => _audioService.play(message.mediaUrl),
-                          )
+                            icon: const Icon(
+                              Icons.play_arrow_rounded,
+                              color: Color(0xFF5B6CFF),
+                            ),
+                            onPressed: () =>
+                                _audioService.play(message.mediaUrl),
+                          ),
                         ],
                       ),
-                    )
+                    ),
                 ],
               ],
               const SizedBox(height: 8),
@@ -553,19 +823,32 @@ class _ChannelScreenState extends State<ChannelScreen> {
                   child: GestureDetector(
                     onTap: () => _openCommentsSheet(message),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
-                        color: isMine ? Colors.white.withOpacity(0.15) : Colors.grey.shade100,
+                        color: isMine
+                            ? Colors.white.withOpacity(0.15)
+                            : Colors.grey.shade100,
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.mode_comment_outlined, size: 14, color: accentColor),
+                          Icon(
+                            Icons.mode_comment_outlined,
+                            size: 14,
+                            color: accentColor,
+                          ),
                           const SizedBox(width: 4),
                           Text(
                             '${message.replyCount} تعليق',
-                            style: TextStyle(fontSize: 11, color: accentColor, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: accentColor,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ],
                       ),
@@ -585,7 +868,9 @@ class _ChannelScreenState extends State<ChannelScreen> {
     if (!isOwner && !channel.moderators.contains(currentUser?.id ?? '')) return;
 
     final moderatorTextController = TextEditingController();
-    final displayNames = await _channelService.fetchUsersDisplayNames(channel.moderators);
+    final displayNames = await _channelService.fetchUsersDisplayNames(
+      channel.moderators,
+    );
 
     if (!mounted) return;
     showModalBottomSheet(
@@ -604,10 +889,20 @@ class _ChannelScreenState extends State<ChannelScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Center(
-                child: Container(width: 42, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10))),
+                child: Container(
+                  width: 42,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade300,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
               ),
               const SizedBox(height: 16),
-              const Text('إدارة القناة', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              const Text(
+                'إدارة القناة',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 16),
               TextField(
                 controller: moderatorTextController,
@@ -626,9 +921,15 @@ class _ChannelScreenState extends State<ChannelScreen> {
                       onPressed: () async {
                         final userId = moderatorTextController.text.trim();
                         if (userId.isEmpty) return;
-                        await _channelService.addModerator(channelId: widget.channelId, userId: userId);
+                        await _channelService.addModerator(
+                          channelId: widget.channelId,
+                          userId: userId,
+                        );
                         if (sheetContext.mounted) Navigator.pop(sheetContext);
-                        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تمت إضافة المشرف')));
+                        if (mounted)
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('تمت إضافة المشرف')),
+                          );
                       },
                       icon: const Icon(Icons.add),
                       label: const Text('إضافة مشرف'),
@@ -637,7 +938,10 @@ class _ChannelScreenState extends State<ChannelScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              const Text('المشرفون الحاليون', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text(
+                'المشرفون الحاليون',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 8),
               Expanded(
                 child: ListView.builder(
@@ -647,17 +951,29 @@ class _ChannelScreenState extends State<ChannelScreen> {
                     final label = displayNames[id] ?? id;
                     final isAdminId = id == channel.adminId;
                     return ListTile(
-                      leading: CircleAvatar(child: Text(label.substring(0, 1).toUpperCase())),
+                      leading: CircleAvatar(
+                        child: Text(label.substring(0, 1).toUpperCase()),
+                      ),
                       title: Text(label),
                       subtitle: Text(isAdminId ? 'مالك القناة' : 'مشرف'),
                       trailing: isAdminId
-                          ? const Icon(Icons.verified_rounded, color: Colors.green)
+                          ? const Icon(
+                              Icons.verified_rounded,
+                              color: Colors.green,
+                            )
                           : IconButton(
                               onPressed: () async {
-                                await _channelService.removeModerator(channelId: widget.channelId, userId: id);
-                                if (sheetContext.mounted) Navigator.pop(sheetContext);
+                                await _channelService.removeModerator(
+                                  channelId: widget.channelId,
+                                  userId: id,
+                                );
+                                if (sheetContext.mounted)
+                                  Navigator.pop(sheetContext);
                               },
-                              icon: const Icon(Icons.remove_circle_outline_rounded, color: Colors.red),
+                              icon: const Icon(
+                                Icons.remove_circle_outline_rounded,
+                                color: Colors.red,
+                              ),
                             ),
                     );
                   },
@@ -681,8 +997,17 @@ class _ChannelScreenState extends State<ChannelScreen> {
     final displayNames = await _channelService.fetchUsersDisplayNames(userIds);
 
     final admins = channel.moderators.toSet().toList();
-    final members = channel.memberIds.where((id) => id != channel.adminId && !admins.contains(id)).toList();
-    final guests = channel.guestIds.where((id) => id != channel.adminId && !admins.contains(id) && !members.contains(id)).toList();
+    final members = channel.memberIds
+        .where((id) => id != channel.adminId && !admins.contains(id))
+        .toList();
+    final guests = channel.guestIds
+        .where(
+          (id) =>
+              id != channel.adminId &&
+              !admins.contains(id) &&
+              !members.contains(id),
+        )
+        .toList();
 
     if (!mounted) return;
 
@@ -704,23 +1029,52 @@ class _ChannelScreenState extends State<ChannelScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Center(
-                    child: Container(width: 42, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10))),
+                    child: Container(
+                      width: 42,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 16),
                   Row(
                     children: [
-                      const Expanded(child: Text('أعضاء القناة', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold))),
+                      const Expanded(
+                        child: Text(
+                          'أعضاء القناة',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFF5B6CFF).withOpacity(0.12),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.people_alt_rounded, size: 14, color: Color(0xFF5B6CFF)),
+                            const Icon(
+                              Icons.people_alt_rounded,
+                              size: 14,
+                              color: Color(0xFF5B6CFF),
+                            ),
                             const SizedBox(width: 4),
-                            Text('${userIds.length}', style: const TextStyle(color: Color(0xFF5B6CFF), fontWeight: FontWeight.bold, fontSize: 12)),
+                            Text(
+                              '${userIds.length}',
+                              style: const TextStyle(
+                                color: Color(0xFF5B6CFF),
+                                fontWeight: FontWeight.bold,
+                                fontSize: 12,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -731,8 +1085,14 @@ class _ChannelScreenState extends State<ChannelScreen> {
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(color: Colors.amber.shade50, borderRadius: BorderRadius.circular(12)),
-                      child: const Text('قائمة الأعضاء مخفية في هذه القناة.', style: TextStyle(color: Colors.orange, fontSize: 12)),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text(
+                        'قائمة الأعضاء مخفية في هذه القناة.',
+                        style: TextStyle(color: Colors.orange, fontSize: 12),
+                      ),
                     ),
                   const SizedBox(height: 12),
                   Row(
@@ -753,7 +1113,10 @@ class _ChannelScreenState extends State<ChannelScreen> {
                         onPressed: () async {
                           final userId = memberController.text.trim();
                           if (userId.isEmpty) return;
-                          await _channelService.addMember(channelId: widget.channelId, userId: userId);
+                          await _channelService.addMember(
+                            channelId: widget.channelId,
+                            userId: userId,
+                          );
                           memberController.clear();
                           if (sheetContext.mounted) Navigator.pop(sheetContext);
                           if (mounted) {
@@ -769,9 +1132,27 @@ class _ChannelScreenState extends State<ChannelScreen> {
                   Expanded(
                     child: ListView(
                       children: [
-                        _buildMembersRoleSection('المديرون', [channel.adminId, ...admins.where((id) => id != channel.adminId)], displayNames, const Color(0xFF5B6CFF)),
-                        _buildMembersRoleSection('الأعضاء', members, displayNames, Colors.green),
-                        _buildMembersRoleSection('الضيوف', guests, displayNames, Colors.purple),
+                        _buildMembersRoleSection(
+                          'المديرون',
+                          [
+                            channel.adminId,
+                            ...admins.where((id) => id != channel.adminId),
+                          ],
+                          displayNames,
+                          const Color(0xFF5B6CFF),
+                        ),
+                        _buildMembersRoleSection(
+                          'الأعضاء',
+                          members,
+                          displayNames,
+                          Colors.green,
+                        ),
+                        _buildMembersRoleSection(
+                          'الضيوف',
+                          guests,
+                          displayNames,
+                          Colors.purple,
+                        ),
                       ],
                     ),
                   ),
@@ -784,8 +1165,16 @@ class _ChannelScreenState extends State<ChannelScreen> {
     );
   }
 
-  Widget _buildMembersRoleSection(String title, List<String> userIds, Map<String, String> displayNames, Color color) {
-    final uniqueUsers = userIds.where((id) => id.trim().isNotEmpty).toSet().toList();
+  Widget _buildMembersRoleSection(
+    String title,
+    List<String> userIds,
+    Map<String, String> displayNames,
+    Color color,
+  ) {
+    final uniqueUsers = userIds
+        .where((id) => id.trim().isNotEmpty)
+        .toSet()
+        .toList();
     if (uniqueUsers.isEmpty) return const SizedBox.shrink();
 
     return Padding(
@@ -797,11 +1186,27 @@ class _ChannelScreenState extends State<ChannelScreen> {
             children: [
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
-                child: Text(title, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                ),
               ),
               const SizedBox(width: 6),
-              Text('${uniqueUsers.length}', style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.bold)),
+              Text(
+                '${uniqueUsers.length}',
+                style: const TextStyle(
+                  color: Colors.black54,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -810,7 +1215,10 @@ class _ChannelScreenState extends State<ChannelScreen> {
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade50,
                   borderRadius: BorderRadius.circular(14),
@@ -818,11 +1226,30 @@ class _ChannelScreenState extends State<ChannelScreen> {
                 ),
                 child: Row(
                   children: [
-                    CircleAvatar(radius: 16, backgroundColor: color.withOpacity(0.12), child: Text(label.substring(0, 1).toUpperCase(), style: TextStyle(color: color, fontWeight: FontWeight.bold))),
+                    CircleAvatar(
+                      radius: 16,
+                      backgroundColor: color.withOpacity(0.12),
+                      child: Text(
+                        label.substring(0, 1).toUpperCase(),
+                        style: TextStyle(
+                          color: color,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
                     const SizedBox(width: 10),
-                    Expanded(child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
                     if (title == 'المديرون')
-                      const Icon(Icons.verified_rounded, color: Colors.green, size: 18),
+                      const Icon(
+                        Icons.verified_rounded,
+                        color: Colors.green,
+                        size: 18,
+                      ),
                   ],
                 ),
               ),
@@ -834,12 +1261,36 @@ class _ChannelScreenState extends State<ChannelScreen> {
   }
 
   Widget _buildAccessBadge(Channel channel) {
-    final accessType = channel.accessType.isNotEmpty ? channel.accessType : (channel.isPrivate ? 'private' : 'public');
-    final Map<String, dynamic> config = {
-      'public': {'label': 'عام', 'color': const Color(0xFFEAFBEE), 'textColor': Colors.green.shade800, 'icon': Icons.public_rounded},
-      'private': {'label': 'خاص', 'color': const Color(0xFFFFF1E6), 'textColor': Colors.orange.shade800, 'icon': Icons.lock_rounded},
-      'guest-only': {'label': 'ضيوف فقط', 'color': const Color(0xFFEDE7FF), 'textColor': Colors.deepPurple.shade800, 'icon': Icons.group_add_rounded},
-    }[accessType] ?? {'label': 'عام', 'color': const Color(0xFFEAFBEE), 'textColor': Colors.green.shade800, 'icon': Icons.public_rounded};
+    final accessType = channel.accessType.isNotEmpty
+        ? channel.accessType
+        : (channel.isPrivate ? 'private' : 'public');
+    final Map<String, dynamic> config =
+        {
+          'public': {
+            'label': 'عام',
+            'color': const Color(0xFFEAFBEE),
+            'textColor': Colors.green.shade800,
+            'icon': Icons.public_rounded,
+          },
+          'private': {
+            'label': 'خاص',
+            'color': const Color(0xFFFFF1E6),
+            'textColor': Colors.orange.shade800,
+            'icon': Icons.lock_rounded,
+          },
+          'guest-only': {
+            'label': 'ضيوف فقط',
+            'color': const Color(0xFFEDE7FF),
+            'textColor': Colors.deepPurple.shade800,
+            'icon': Icons.group_add_rounded,
+          },
+        }[accessType] ??
+        {
+          'label': 'عام',
+          'color': const Color(0xFFEAFBEE),
+          'textColor': Colors.green.shade800,
+          'icon': Icons.public_rounded,
+        };
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -870,11 +1321,15 @@ class _ChannelScreenState extends State<ChannelScreen> {
     final isAppAdmin = currentUser?.role == 'admin';
 
     final nameController = TextEditingController(text: channel.name);
-    final descriptionController = TextEditingController(text: channel.description);
+    final descriptionController = TextEditingController(
+      text: channel.description,
+    );
     final imageController = TextEditingController(text: channel.imageUrl);
     bool isPrivate = channel.isPrivate;
     bool isReadOnly = channel.isReadOnly;
-    String accessType = channel.accessType.isNotEmpty ? channel.accessType : (channel.isPrivate ? 'private' : 'public');
+    String accessType = channel.accessType.isNotEmpty
+        ? channel.accessType
+        : (channel.isPrivate ? 'private' : 'public');
     bool isMembersHidden = channel.isMembersHidden;
     bool isAccountsDisabled = channel.isAccountsDisabled;
 
@@ -886,19 +1341,45 @@ class _ChannelScreenState extends State<ChannelScreen> {
           content: SingleChildScrollView(
             child: Column(
               children: [
-                TextField(controller: nameController, decoration: const InputDecoration(labelText: 'اسم القناة', border: OutlineInputBorder())),
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'اسم القناة',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
                 const SizedBox(height: 12),
-                TextField(controller: descriptionController, minLines: 2, maxLines: 4, decoration: const InputDecoration(labelText: 'الوصف', border: OutlineInputBorder())),
+                TextField(
+                  controller: descriptionController,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'الوصف',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
                 const SizedBox(height: 12),
-                TextField(controller: imageController, decoration: const InputDecoration(labelText: 'رابط الصورة', border: OutlineInputBorder())),
+                TextField(
+                  controller: imageController,
+                  decoration: const InputDecoration(
+                    labelText: 'رابط الصورة',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   value: accessType,
-                  decoration: const InputDecoration(labelText: 'نوع المشاركة', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(
+                    labelText: 'نوع المشاركة',
+                    border: OutlineInputBorder(),
+                  ),
                   items: const [
                     DropdownMenuItem(value: 'public', child: Text('عام')),
                     DropdownMenuItem(value: 'private', child: Text('خاص')),
-                    DropdownMenuItem(value: 'guest-only', child: Text('ضيوف فقط')),
+                    DropdownMenuItem(
+                      value: 'guest-only',
+                      child: Text('ضيوف فقط'),
+                    ),
                   ],
                   onChanged: (value) {
                     setState(() {
@@ -908,22 +1389,36 @@ class _ChannelScreenState extends State<ChannelScreen> {
                   },
                 ),
                 const SizedBox(height: 8),
-                SwitchListTile.adaptive(title: const Text('وضع القراءة فقط'), value: isReadOnly, onChanged: (value) => setState(() => isReadOnly = value)),
-                SwitchListTile.adaptive(title: const Text('إخفاء قائمة الأعضاء'), value: isMembersHidden, onChanged: (value) => setState(() => isMembersHidden = value)),
+                SwitchListTile.adaptive(
+                  title: const Text('وضع القراءة فقط'),
+                  value: isReadOnly,
+                  onChanged: (value) => setState(() => isReadOnly = value),
+                ),
+                SwitchListTile.adaptive(
+                  title: const Text('إخفاء قائمة الأعضاء'),
+                  value: isMembersHidden,
+                  onChanged: (value) => setState(() => isMembersHidden = value),
+                ),
                 if (isAppAdmin)
                   SwitchListTile.adaptive(
                     title: const Text('تعطيل الحسابات'),
                     subtitle: const Text('خاص بإدارة التطبيق فقط'),
                     value: isAccountsDisabled,
-                    onChanged: (value) => setState(() => isAccountsDisabled = value),
+                    onChanged: (value) =>
+                        setState(() => isAccountsDisabled = value),
                   ),
               ],
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('إلغاء')),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('إلغاء'),
+            ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF5B6CFF)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF5B6CFF),
+              ),
               onPressed: () => Navigator.pop(dialogContext, true),
               child: const Text('حفظ', style: TextStyle(color: Colors.white)),
             ),
@@ -947,6 +1442,121 @@ class _ChannelScreenState extends State<ChannelScreen> {
     );
   }
 
+  Future<void> _changeChannelImage(Channel channel) async {
+    final currentUser = context.read<AuthProvider>().currentUser;
+    final canEdit =
+        currentUser != null &&
+        (currentUser.id == channel.adminId ||
+            channel.moderators.contains(currentUser.id) ||
+            currentUser.role == 'admin');
+    if (!canEdit || _isUpdatingChannelImage) return;
+
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.image_outlined),
+              title: Text(
+                channel.imageUrl.trim().isEmpty ? 'إضافة صورة' : 'تغيير الصورة',
+              ),
+              onTap: () => Navigator.pop(sheetContext, 'change'),
+            ),
+            if (channel.imageUrl.trim().isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text('حذف الصورة'),
+                onTap: () => Navigator.pop(sheetContext, 'delete'),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || action == null) return;
+    if (action == 'delete') {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('حذف صورة القناة؟'),
+          content: const Text('سيتم إزالة صورة القناة الحالية.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('حذف'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+      await _saveChannelImage(channel.id, '');
+      return;
+    }
+
+    final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
+    if (picked == null || !mounted) return;
+
+    setState(() => _isUpdatingChannelImage = true);
+    try {
+      final uploadResult = kIsWeb
+          ? await _mediaService.uploadBytesWithResult(
+              await picked.readAsBytes(),
+              picked.name,
+              isVideo: false,
+            )
+          : await _mediaService.uploadXFileWithResult(picked, isVideo: false);
+      final imageUrl = uploadResult.url?.trim() ?? '';
+      if (!uploadResult.success || imageUrl.isEmpty) {
+        throw Exception(uploadResult.error ?? 'فشل رفع صورة القناة');
+      }
+      final saved = await _saveChannelImage(channel.id, imageUrl);
+      if (!saved) return;
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('فشل تحديث صورة القناة: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUpdatingChannelImage = false);
+    }
+  }
+
+  Future<bool> _saveChannelImage(String channelId, String imageUrl) async {
+    setState(() => _isUpdatingChannelImage = true);
+    try {
+      await _channelService.updateChannelImage(
+        channelId: channelId,
+        imageUrl: imageUrl,
+      );
+      if (mounted) {
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              imageUrl.isEmpty ? 'تم حذف صورة القناة' : 'تم تحديث صورة القناة',
+            ),
+          ),
+        );
+      }
+      return true;
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('فشل حفظ صورة القناة: $error')));
+      }
+      return false;
+    } finally {
+      if (mounted) setState(() => _isUpdatingChannelImage = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final authProvider = context.watch<AuthProvider>();
@@ -966,29 +1576,41 @@ class _ChannelScreenState extends State<ChannelScreen> {
             future: _channelService.getChannel(widget.channelId),
             builder: (context, snapshot) {
               final channel = snapshot.data;
-              final isManager = channel != null && (currentUser?.id == channel.adminId || channel.moderators.contains(currentUser?.id ?? ''));
+              final isManager =
+                  channel != null &&
+                  (currentUser?.id == channel.adminId ||
+                      channel.moderators.contains(currentUser?.id ?? ''));
               if (!isManager && !isAdmin) return const SizedBox.shrink();
               return PopupMenuButton<String>(
                 onSelected: (value) async {
                   if (value == 'settings') {
-                    final channelData = await _channelService.getChannel(widget.channelId);
+                    final channelData = await _channelService.getChannel(
+                      widget.channelId,
+                    );
                     if (channelData != null && mounted) {
                       await _showChannelSettingsDialog(channelData);
                     }
                   } else if (value == 'mods') {
-                    final channelData = await _channelService.getChannel(widget.channelId);
-                    if (channelData != null && mounted) { 
+                    final channelData = await _channelService.getChannel(
+                      widget.channelId,
+                    );
+                    if (channelData != null && mounted) {
                       await _showChannelManagementSheet(channelData);
                     }
                   } else if (value == 'members') {
-                    final channelData = await _channelService.getChannel(widget.channelId);
+                    final channelData = await _channelService.getChannel(
+                      widget.channelId,
+                    );
                     if (channelData != null && mounted) {
                       await _showChannelMembersSheet(channelData);
                     }
                   }
                 },
                 itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'settings', child: Text('إعدادات القناة')),
+                  PopupMenuItem(
+                    value: 'settings',
+                    child: Text('إعدادات القناة'),
+                  ),
                   PopupMenuItem(value: 'mods', child: Text('إدارة المشرفين')),
                   PopupMenuItem(value: 'members', child: Text('أعضاء القناة')),
                 ],
@@ -1000,10 +1622,16 @@ class _ChannelScreenState extends State<ChannelScreen> {
       body: FutureBuilder<Channel?>(
         future: _channelService.getChannel(widget.channelId),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-          if (snapshot.hasError || snapshot.data == null) return const Center(child: Text('تعذر تحميل القناة'));
+          if (snapshot.connectionState == ConnectionState.waiting)
+            return const Center(child: CircularProgressIndicator());
+          if (snapshot.hasError || snapshot.data == null)
+            return const Center(child: Text('تعذر تحميل القناة'));
 
           final channel = snapshot.data!;
+          final canManageChannel =
+              isAdmin ||
+              currentUser?.id == channel.adminId ||
+              channel.moderators.contains(currentUser?.id ?? '');
 
           return Column(
             children: [
@@ -1023,15 +1651,62 @@ class _ChannelScreenState extends State<ChannelScreen> {
                 ),
                 child: Row(
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(18),
-                      child: CachedNetworkImage(
-                        imageUrl: channel.imageUrl,
-                        width: 72,
-                        height: 72,
-                        fit: BoxFit.cover,
-                        placeholder: (_, __) => const SizedBox(width: 72, height: 72, child: Center(child: CircularProgressIndicator(strokeWidth: 2))),
-                        errorWidget: (_, __, ___) => Container(width: 72, height: 72, color: Colors.grey.shade200, child: const Icon(Icons.broken_image_outlined)),
+                    GestureDetector(
+                      onTap: canManageChannel
+                          ? () => _changeChannelImage(channel)
+                          : null,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: channel.imageUrl.trim().isEmpty
+                                ? Container(
+                                    width: 72,
+                                    height: 72,
+                                    color: Colors.grey.shade200,
+                                    child: const Icon(
+                                      Icons.add_a_photo_outlined,
+                                    ),
+                                  )
+                                : CachedNetworkImage(
+                                    imageUrl: channel.imageUrl,
+                                    width: 72,
+                                    height: 72,
+                                    fit: BoxFit.cover,
+                                    placeholder: (_, __) => const SizedBox(
+                                      width: 72,
+                                      height: 72,
+                                      child: Center(
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                    ),
+                                    errorWidget: (_, __, ___) => Container(
+                                      width: 72,
+                                      height: 72,
+                                      color: Colors.grey.shade200,
+                                      child: const Icon(
+                                        Icons.broken_image_outlined,
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                          if (_isUpdatingChannelImage)
+                            const SizedBox(
+                              width: 72,
+                              height: 72,
+                              child: ColoredBox(
+                                color: Colors.black38,
+                                child: Center(
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -1039,9 +1714,23 @@ class _ChannelScreenState extends State<ChannelScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(channel.name, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20)),
+                          Text(
+                            channel.name,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 20,
+                            ),
+                          ),
                           const SizedBox(height: 4),
-                          Text(channel.description, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, height: 1.4)),
+                          Text(
+                            channel.description,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.grey,
+                              height: 1.4,
+                            ),
+                          ),
                           const SizedBox(height: 8),
                           Row(
                             children: [
@@ -1049,14 +1738,21 @@ class _ChannelScreenState extends State<ChannelScreen> {
                               const SizedBox(width: 8),
                               if (channel.isReadOnly)
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: Colors.grey.shade100,
                                     borderRadius: BorderRadius.circular(10),
                                   ),
                                   child: const Text(
                                     'قراءة فقط',
-                                    style: TextStyle(fontSize: 11, color: Colors.black54, fontWeight: FontWeight.bold),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.black54,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ),
                             ],
@@ -1072,7 +1768,10 @@ class _ChannelScreenState extends State<ChannelScreen> {
                 Container(
                   width: double.infinity,
                   margin: const EdgeInsets.symmetric(horizontal: 12),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.amber.shade50,
                     borderRadius: BorderRadius.circular(14),
@@ -1080,9 +1779,18 @@ class _ChannelScreenState extends State<ChannelScreen> {
                   ),
                   child: Row(
                     children: const [
-                      Icon(Icons.info_outline_rounded, size: 16, color: Colors.orange),
+                      Icon(
+                        Icons.info_outline_rounded,
+                        size: 16,
+                        color: Colors.orange,
+                      ),
                       SizedBox(width: 8),
-                      Expanded(child: Text('هذه القناة في وضع القراءة فقط؛ يضيف المشرفون المنشورات فقط.', style: TextStyle(fontSize: 12, color: Colors.black87))),
+                      Expanded(
+                        child: Text(
+                          'هذه القناة في وضع القراءة فقط؛ يضيف المشرفون المنشورات فقط.',
+                          style: TextStyle(fontSize: 12, color: Colors.black87),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -1094,21 +1802,37 @@ class _ChannelScreenState extends State<ChannelScreen> {
                 child: StreamBuilder<List<ChannelMessage>>(
                   stream: _channelService.messagesStream(widget.channelId),
                   builder: (context, messagesSnapshot) {
-                    if (messagesSnapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                    if (messagesSnapshot.hasError) return Center(child: Text('تعذر تحميل المنشورات: ${messagesSnapshot.error}'));
+                    if (messagesSnapshot.connectionState ==
+                        ConnectionState.waiting)
+                      return const Center(child: CircularProgressIndicator());
+                    if (messagesSnapshot.hasError)
+                      return Center(
+                        child: Text(
+                          'تعذر تحميل المنشورات: ${messagesSnapshot.error}',
+                        ),
+                      );
 
                     final messages = messagesSnapshot.data ?? [];
-                    if (messages.isEmpty) return const Center(child: Text('لا توجد منشورات في هذه القناة'));
+                    if (messages.isEmpty)
+                      return const Center(
+                        child: Text('لا توجد منشورات في هذه القناة'),
+                      );
 
                     return ListView.builder(
                       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
                       itemCount: messages.length,
                       itemBuilder: (_, index) {
                         final message = messages[index];
-                        final isMine = message.senderId == (currentUser?.id ?? '');
+                        final isMine =
+                            message.senderId == (currentUser?.id ?? '');
 
                         return GestureDetector(
-                          onLongPress: () => _showLongPressOptions(context, message, currentUser?.id ?? '', isAdmin),
+                          onLongPress: () => _showLongPressOptions(
+                            context,
+                            message,
+                            currentUser?.id ?? '',
+                            isAdmin,
+                          ),
                           child: _buildMessageBubble(message, isMine),
                         );
                       },
@@ -1131,19 +1855,36 @@ class _ChannelScreenState extends State<ChannelScreen> {
 
     setState(() => _isPublishing = true);
     try {
-      await _channelService.publishMessage(channelId: widget.channelId, senderId: currentUser.id, senderName: currentUser.username, text: text);
+      await _channelService.publishMessage(
+        channelId: widget.channelId,
+        senderId: currentUser.id,
+        senderName: currentUser.username,
+        text: text,
+        clientRequestId:
+            '${widget.channelId}_${DateTime.now().microsecondsSinceEpoch}',
+      );
       _textController.clear();
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('فشل نشر المنشور')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('فشل نشر المنشور')));
     } finally {
       if (mounted) setState(() => _isPublishing = false);
     }
   }
 
   // 🔥 التعديل الجذري والعميق المتوافق 100% مع MediaService
-  Future<void> _pickAndPublishMedia(BuildContext context, String currentUserId, {bool isVideo = false}) async {
-    final result = await FilePicker.platform.pickFiles(type: isVideo ? FileType.video : FileType.image, allowCompression: true, withData: kIsWeb);
+  Future<void> _pickAndPublishMedia(
+    BuildContext context,
+    String currentUserId, {
+    bool isVideo = false,
+  }) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: isVideo ? FileType.video : FileType.image,
+      allowCompression: true,
+      withData: kIsWeb,
+    );
     if (result == null || result.files.isEmpty) return;
 
     final file = result.files.first;
@@ -1152,70 +1893,84 @@ class _ChannelScreenState extends State<ChannelScreen> {
       _isPublishing = true;
       _uploadProgress = 0.0;
     });
+    final clientRequestId =
+        '${widget.channelId}_${DateTime.now().microsecondsSinceEpoch}';
 
     try {
       String uploadedUrl = '';
-      String finalMediaType = isVideo ? 'video' : 'image'; 
-      
+      String finalMediaType = isVideo ? 'video' : 'image';
+
       if (kIsWeb && file.bytes != null) {
         // ✅ رفع الويب مع دعم Progress واكتشاف النوع التلقائي
-        final uploadResult = await _mediaService.uploadBytesWithResultAndProgress(
-          file.bytes!, 
-          file.name, 
-          isVideo: isVideo,
-          onProgress: (progress) {
-            if (mounted) setState(() => _uploadProgress = progress.percentComplete);
-          }
-        );
-        
-        if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
+        final uploadResult = await _mediaService
+            .uploadBytesWithResultAndProgress(
+              file.bytes!,
+              file.name,
+              isVideo: isVideo,
+              onProgress: (progress) {
+                if (mounted)
+                  setState(() => _uploadProgress = progress.percentComplete);
+              },
+            );
+
+        if (!uploadResult.success ||
+            uploadResult.url == null ||
+            uploadResult.url!.isEmpty) {
           throw Exception(uploadResult.error ?? 'فشل الرفع');
         }
         uploadedUrl = uploadResult.url!;
         finalMediaType = uploadResult.detectedFileType ?? finalMediaType;
-
       } else if (file.path != null) {
         // ✅ رفع الموبايل باستخدام XFile مع مؤشر الرفع والاستفادة من ذكاء الخدمة
         final localXFile = XFile(file.path!);
         final uploadResult = await _mediaService.uploadXFileWithResult(
-          localXFile, 
+          localXFile,
           isVideo: isVideo,
           onProgress: (progress) {
-            if (mounted) setState(() => _uploadProgress = progress.percentComplete);
-          }
+            if (mounted)
+              setState(() => _uploadProgress = progress.percentComplete);
+          },
         );
-        
-        if (!uploadResult.success || uploadResult.url == null || uploadResult.url!.isEmpty) {
+
+        if (!uploadResult.success ||
+            uploadResult.url == null ||
+            uploadResult.url!.isEmpty) {
           throw Exception(uploadResult.error ?? 'فشل الرفع عبر المحرك');
         }
         uploadedUrl = uploadResult.url!;
         finalMediaType = uploadResult.detectedFileType ?? finalMediaType;
-        
       } else {
         throw Exception('لا يوجد مسار للملف');
       }
 
       // ✅ النشر النهائي في القناة
       await _channelService.publishMessage(
-        channelId: widget.channelId, 
-        senderId: currentUserId, 
-        senderName: context.read<AuthProvider>().currentUser?.username ?? 'admin',
-        text: _textController.text.trim(), 
-        mediaUrl: uploadedUrl, 
+        channelId: widget.channelId,
+        senderId: currentUserId,
+        senderName:
+            context.read<AuthProvider>().currentUser?.username ?? 'admin',
+        text: _textController.text.trim(),
+        mediaUrl: uploadedUrl,
         mediaType: finalMediaType, // 🔥 استخدام النوع الحقيقي المكتشف
+        clientRequestId: clientRequestId,
       );
-      
+
       _textController.clear();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم نشر المحتوى بنجاح')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تم نشر المحتوى بنجاح')));
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل رفع المحتوى: $error')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('فشل رفع المحتوى: $error')));
     } finally {
-      if (mounted) setState(() {
-        _isPublishing = false;
-        _uploadProgress = 0.0;
-      });
+      if (mounted)
+        setState(() {
+          _isPublishing = false;
+          _uploadProgress = 0.0;
+        });
     }
   }
 }
@@ -1257,7 +2012,10 @@ class _CommentsSheetState extends State<_CommentsSheet> {
       );
       _commentController.clear();
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e')));
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('خطأ: $e')));
     } finally {
       if (mounted) setState(() => _isPublishing = false);
     }
@@ -1269,7 +2027,7 @@ class _CommentsSheetState extends State<_CommentsSheet> {
     final currentUser = authProvider.currentUser;
 
     return Container(
-      height: MediaQuery.of(context).size.height * 0.75, 
+      height: MediaQuery.of(context).size.height * 0.75,
       decoration: BoxDecoration(
         color: Theme.of(context).scaffoldBackgroundColor,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
@@ -1278,9 +2036,19 @@ class _CommentsSheetState extends State<_CommentsSheet> {
         children: [
           Container(
             padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Container(width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(10))),
+            child: Container(
+              width: 40,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
           ),
-          const Text('التعليقات', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+          const Text(
+            'التعليقات',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
           const Divider(),
           Padding(
             padding: const EdgeInsets.all(12),
@@ -1288,20 +2056,33 @@ class _CommentsSheetState extends State<_CommentsSheet> {
               children: [
                 const Icon(Icons.format_quote, color: Colors.grey),
                 const SizedBox(width: 8),
-                Expanded(child: Text(widget.parentMessage.text, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.black54))),
+                Expanded(
+                  child: Text(
+                    widget.parentMessage.text,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.black54),
+                  ),
+                ),
               ],
             ),
           ),
           const Divider(height: 1),
           Expanded(
             child: StreamBuilder<List<ChannelMessage>>(
-              stream: _channelService.commentsStream(widget.channelId, widget.parentMessage.id),
+              stream: _channelService.commentsStream(
+                widget.channelId,
+                widget.parentMessage.id,
+              ),
               builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                if (snapshot.hasError) return const Center(child: Text('تعذر تحميل التعليقات'));
+                if (snapshot.connectionState == ConnectionState.waiting)
+                  return const Center(child: CircularProgressIndicator());
+                if (snapshot.hasError)
+                  return const Center(child: Text('تعذر تحميل التعليقات'));
 
                 final comments = snapshot.data ?? [];
-                if (comments.isEmpty) return const Center(child: Text('كن أول من يعلق!'));
+                if (comments.isEmpty)
+                  return const Center(child: Text('كن أول من يعلق!'));
 
                 return ListView.builder(
                   padding: const EdgeInsets.all(12),
@@ -1315,26 +2096,56 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                         children: [
                           CircleAvatar(
                             radius: 16,
-                            backgroundColor: const Color(0xFF5B6CFF).withOpacity(0.2),
-                            child: Text(comment.senderName.substring(0, 1).toUpperCase(), style: const TextStyle(color: Color(0xFF5B6CFF), fontWeight: FontWeight.bold)),
+                            backgroundColor: const Color(
+                              0xFF5B6CFF,
+                            ).withOpacity(0.2),
+                            child: Text(
+                              comment.senderName.substring(0, 1).toUpperCase(),
+                              style: const TextStyle(
+                                color: Color(0xFF5B6CFF),
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
                           ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Container(
                               padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.grey.shade200),
+                              ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Row(
                                     children: [
-                                      Text(comment.senderName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                      Text(
+                                        comment.senderName,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                        ),
+                                      ),
                                       const Spacer(),
-                                      Text(timeago.format(comment.createdAt, locale: 'ar'), style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                                      Text(
+                                        timeago.format(
+                                          comment.createdAt,
+                                          locale: 'ar',
+                                        ),
+                                        style: const TextStyle(
+                                          fontSize: 10,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
                                     ],
                                   ),
                                   const SizedBox(height: 4),
-                                  Text(comment.text, style: const TextStyle(fontSize: 14)),
+                                  Text(
+                                    comment.text,
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
                                 ],
                               ),
                             ),
@@ -1348,8 +2159,22 @@ class _CommentsSheetState extends State<_CommentsSheet> {
             ),
           ),
           Container(
-            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 8, left: 12, right: 12, top: 8),
-            decoration: BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, -5))]),
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom + 8,
+              left: 12,
+              right: 12,
+              top: 8,
+            ),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, -5),
+                ),
+              ],
+            ),
             child: Row(
               children: [
                 Expanded(
@@ -1357,19 +2182,32 @@ class _CommentsSheetState extends State<_CommentsSheet> {
                     controller: _commentController,
                     decoration: InputDecoration(
                       hintText: 'اكتب تعليقاً...',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(20),
+                        borderSide: BorderSide.none,
+                      ),
                       filled: true,
                       fillColor: Colors.grey.shade100,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 IconButton(
-                  onPressed: _isPublishing || currentUser == null ? null : () => _sendComment(currentUser.id, currentUser.username),
-                  icon: _isPublishing 
-                    ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.send, color: Color(0xFF5B6CFF)),
+                  onPressed: _isPublishing || currentUser == null
+                      ? null
+                      : () =>
+                            _sendComment(currentUser.id, currentUser.username),
+                  icon: _isPublishing
+                      ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.send, color: Color(0xFF5B6CFF)),
                 ),
               ],
             ),

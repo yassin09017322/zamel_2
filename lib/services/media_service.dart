@@ -632,15 +632,16 @@ class MediaService {
   String _detectFileType(String fileName, {required bool isVideo}) {
     final lowered = fileName.toLowerCase();
 
-    if (lowered.endsWith('.mp4') ||
-        lowered.endsWith('.mov') ||
-        lowered.endsWith('.m4v') ||
-        lowered.endsWith('.webm') ||
-        lowered.endsWith('.avi') ||
-        lowered.endsWith('.mkv') ||
-        lowered.endsWith('.flv') ||
-        lowered.endsWith('.wmv') ||
-        lowered.endsWith('.3gp')) {
+    if (isVideo &&
+        (lowered.endsWith('.mp4') ||
+            lowered.endsWith('.mov') ||
+            lowered.endsWith('.m4v') ||
+            lowered.endsWith('.webm') ||
+            lowered.endsWith('.avi') ||
+            lowered.endsWith('.mkv') ||
+            lowered.endsWith('.flv') ||
+            lowered.endsWith('.wmv') ||
+            lowered.endsWith('.3gp'))) {
       return 'video';
     }
 
@@ -662,7 +663,8 @@ class MediaService {
         lowered.endsWith('.flac') ||
         lowered.endsWith('.ogg') ||
         lowered.endsWith('.wma') ||
-        lowered.endsWith('.aiff')) {
+        lowered.endsWith('.aiff') ||
+        (!isVideo && lowered.endsWith('.webm'))) {
       return 'audio';
     }
 
@@ -709,15 +711,15 @@ class MediaService {
     if (lowered.endsWith('.bmp')) return 'image/bmp';
     if (lowered.endsWith('.ico')) return 'image/x-icon';
 
-    if (lowered.endsWith('.mp4')) return 'video/mp4';
-    if (lowered.endsWith('.mov')) return 'video/quicktime';
-    if (lowered.endsWith('.m4v')) return 'video/x-m4v';
-    if (lowered.endsWith('.webm')) return 'video/webm';
-    if (lowered.endsWith('.avi')) return 'video/x-msvideo';
-    if (lowered.endsWith('.mkv')) return 'video/x-matroska';
-    if (lowered.endsWith('.flv')) return 'video/x-flv';
-    if (lowered.endsWith('.wmv')) return 'video/x-ms-wmv';
-    if (lowered.endsWith('.3gp')) return 'video/3gpp';
+    if (isVideo && lowered.endsWith('.mp4')) return 'video/mp4';
+    if (isVideo && lowered.endsWith('.mov')) return 'video/quicktime';
+    if (isVideo && lowered.endsWith('.m4v')) return 'video/x-m4v';
+    if (isVideo && lowered.endsWith('.webm')) return 'video/webm';
+    if (isVideo && lowered.endsWith('.avi')) return 'video/x-msvideo';
+    if (isVideo && lowered.endsWith('.mkv')) return 'video/x-matroska';
+    if (isVideo && lowered.endsWith('.flv')) return 'video/x-flv';
+    if (isVideo && lowered.endsWith('.wmv')) return 'video/x-ms-wmv';
+    if (isVideo && lowered.endsWith('.3gp')) return 'video/3gpp';
 
     if (lowered.endsWith('.mp3')) return 'audio/mpeg';
     if (lowered.endsWith('.wav')) return 'audio/wav';
@@ -727,6 +729,7 @@ class MediaService {
     if (lowered.endsWith('.ogg')) return 'audio/ogg';
     if (lowered.endsWith('.wma')) return 'audio/x-ms-wma';
     if (lowered.endsWith('.aiff')) return 'audio/aiff';
+    if (!isVideo && lowered.endsWith('.webm')) return 'audio/webm';
 
     if (lowered.endsWith('.pdf')) return 'application/pdf';
     if (lowered.endsWith('.doc')) return 'application/msword';

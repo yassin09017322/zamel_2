@@ -12,6 +12,7 @@ import '../screens/profile_screen.dart';
 import '../services/audio_service.dart';
 import '../services/comment_service.dart';
 import '../services/post_service.dart';
+import '../services/post_translation_service.dart';
 import 'media_preview.dart';
 
 class PostCard extends StatefulWidget {
@@ -37,6 +38,10 @@ class _PostCardState extends State<PostCard>
   Duration _audioPosition = Duration.zero;
   late final StreamSubscription<Duration> _audioPositionSub;
   late final StreamSubscription<PlayerState> _audioStateSub;
+  final PostTranslationService _translationService = PostTranslationService();
+  String? _translationKey;
+  String? _translatedText;
+  bool _translationLoading = false;
 
   static const Map<String, Map<String, dynamic>> _zamelReactions = {
     'like': {'emoji': '👍', 'label': 'أوافق', 'color': Color(0xFF5B6CFF)},
@@ -328,8 +333,70 @@ class _PostCardState extends State<PostCard>
     }
   }
 
-  bool get _isTextPost =>
-      widget.post.mediaType == 'none' && widget.post.mediaData.isEmpty;
+  void _requestPostTranslation() {
+    final targetLanguage = Localizations.localeOf(context).languageCode;
+    final key = '${widget.post.id}|$targetLanguage|${widget.post.text}';
+    if (_translationKey == key) return;
+
+    _translationKey = key;
+    _translatedText = null;
+    _translationLoading = true;
+    unawaited(_loadPostTranslation(key, targetLanguage));
+  }
+
+  Future<void> _loadPostTranslation(String key, String targetLanguage) async {
+    String? translation;
+    try {
+      translation = await _translationService.translateIfNeeded(
+        postId: widget.post.id,
+        text: widget.post.text,
+        targetLanguage: targetLanguage,
+      );
+    } catch (error) {
+      debugPrint('Post translation failed: $error');
+    } finally {
+      if (!mounted || _translationKey != key) return;
+      setState(() {
+        _translatedText = translation;
+        _translationLoading = false;
+      });
+    }
+  }
+
+  Widget _buildPostText({required bool isOwner}) {
+    _requestPostTranslation();
+    final original = _buildTextContent(isOwner: isOwner);
+    if (_translationLoading) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          original,
+          const SizedBox(height: 8),
+          const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ],
+      );
+    }
+    if ((_translatedText ?? '').isEmpty) return original;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        original,
+        const SizedBox(height: 8),
+        Text(
+          _translatedText!,
+          style: const TextStyle(
+            fontSize: 15,
+            height: 1.5,
+            color: Color(0xFF5B6CFF),
+          ),
+        ),
+      ],
+    );
+  }
 
   Future<void> _copyPostText() async {
     await Clipboard.setData(ClipboardData(text: widget.post.text));
@@ -782,18 +849,9 @@ class _PostCardState extends State<PostCard>
               ),
               const SizedBox(height: 12),
 
-              if (_isTextPost)
-                _buildTextContent(
+              if (widget.post.text.trim().isNotEmpty)
+                _buildPostText(
                   isOwner: currentUser?.id == widget.post.userId,
-                )
-              else
-                Text(
-                  widget.post.text,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    height: 1.5,
-                    color: Color(0xFF2F2F2F),
-                  ),
                 ),
 
               if (widget.post.mediaFiles.isNotEmpty) ...[
@@ -1029,7 +1087,12 @@ class _PostCardState extends State<PostCard>
     if (mediaView.length == 1) {
       final item = mediaView.first;
       if (item.mediaType == 'video') {
-        return MediaPreview(mediaPath: item.url, mediaType: 'video');
+        return MediaPreview(
+          mediaPath: item.url,
+          mediaType: 'video',
+          enableAudio: true,
+          showControls: true,
+        );
       }
 
       return ClipRRect(
@@ -1069,7 +1132,12 @@ class _PostCardState extends State<PostCard>
       itemBuilder: (context, index) {
         final item = mediaView[index];
         if (item.mediaType == 'video') {
-          return MediaPreview(mediaPath: item.url, mediaType: 'video');
+          return MediaPreview(
+            mediaPath: item.url,
+            mediaType: 'video',
+            enableAudio: true,
+            showControls: true,
+          );
         }
 
         return ClipRRect(
@@ -1109,6 +1177,7 @@ class _PostCardState extends State<PostCard>
         int recordingSeconds = 0;
         Comment? replyToComment;
         bool isCanceling = false;
+        bool isSendingComment = false;
 
         return StatefulBuilder(
           builder: (BuildContext ctx, StateSetter setModalState) {
@@ -1604,6 +1673,10 @@ class _PostCardState extends State<PostCard>
                                           }
 
                                           try {
+                                            if (isSendingComment) return;
+                                            setModalState(
+                                              () => isSendingComment = true,
+                                            );
                                             final uploadResult =
                                                 await audioService
                                                     .uploadAudioFile(audioPath);
@@ -1627,11 +1700,13 @@ class _PostCardState extends State<PostCard>
                                                   replyToComment?.userId,
                                               replyToUsername:
                                                   replyToComment?.username,
+                                              clientRequestId:
+                                                  '${widget.post.id}_${DateTime.now().microsecondsSinceEpoch}',
                                             );
                                             setModalState(
                                               () => replyToComment = null,
                                             );
-                                          } catch (_) {
+                                          } catch (error) {
                                             if (context.mounted) {
                                               ScaffoldMessenger.of(
                                                 context,
@@ -1643,15 +1718,25 @@ class _PostCardState extends State<PostCard>
                                                 ),
                                               );
                                             }
+                                          } finally {
+                                            if (context.mounted) {
+                                              setModalState(
+                                                () => isSendingComment = false,
+                                              );
+                                            }
                                           }
                                         },
                                   onTap: () async {
                                     if (isTyping) {
+                                      if (isSendingComment) return;
                                       final text = commentController.text
                                           .trim();
                                       if (text.isEmpty) {
                                         return;
                                       }
+                                      setModalState(
+                                        () => isSendingComment = true,
+                                      );
                                       try {
                                         await CommentService().addComment(
                                           postId: widget.post.id,
@@ -1662,13 +1747,15 @@ class _PostCardState extends State<PostCard>
                                           replyToUserId: replyToComment?.userId,
                                           replyToUsername:
                                               replyToComment?.username,
+                                          clientRequestId:
+                                              '${widget.post.id}_${DateTime.now().microsecondsSinceEpoch}',
                                         );
                                         commentController.clear();
                                         setModalState(() {
                                           isTyping = false;
                                           replyToComment = null;
                                         });
-                                      } catch (_) {
+                                      } catch (error) {
                                         if (context.mounted) {
                                           ScaffoldMessenger.of(
                                             context,
@@ -1678,6 +1765,12 @@ class _PostCardState extends State<PostCard>
                                                 'فشل إرسال التعليق',
                                               ),
                                             ),
+                                          );
+                                        }
+                                      } finally {
+                                        if (context.mounted) {
+                                          setModalState(
+                                            () => isSendingComment = false,
                                           );
                                         }
                                       }

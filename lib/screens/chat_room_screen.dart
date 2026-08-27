@@ -538,7 +538,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       ..fileName = getFileName()
       ..fileType = fileType ?? ''
       ..fileSize =
-          fileSize ?? (uploadFile != null ? await uploadFile.length() : 0)
+          fileSize ??
+            (webBytes != null
+              ? webBytes.length
+              : (uploadFile != null ? await uploadFile.length() : 0))
       ..status = MessageStatus.pending
       ..uploadProgress = 0.0
       ..uploadStartedAt = DateTime.now()
@@ -574,15 +577,33 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       }
 
       final isVideo = mediaType == ChatMessageType.video;
-      final uploadResult = await _mediaService.uploadXFileWithResult(
-        uploadFile,
-        isVideo: isVideo,
-        onProgress: (progress) {
-          unawaited(
-            _updateUploadProgress(tempMessageId, progress.percentComplete),
-          );
-        },
-      );
+      final uploadResult =
+          kIsWeb && mediaType == ChatMessageType.image && webBytes != null
+          ? await _mediaService.uploadBytesWithResultAndProgress(
+              webBytes,
+              fileName,
+              isVideo: false,
+              onProgress: (progress) {
+                unawaited(
+                  _updateUploadProgress(
+                    tempMessageId,
+                    progress.percentComplete,
+                  ),
+                );
+              },
+            )
+          : await _mediaService.uploadXFileWithResult(
+              uploadFile,
+              isVideo: isVideo,
+              onProgress: (progress) {
+                unawaited(
+                  _updateUploadProgress(
+                    tempMessageId,
+                    progress.percentComplete,
+                  ),
+                );
+              },
+            );
       final downloadUrl = uploadResult.url?.trim() ?? '';
       if (!uploadResult.success || downloadUrl.isEmpty) {
         throw Exception(uploadResult.error ?? 'فشل الرفع عبر المحرك');

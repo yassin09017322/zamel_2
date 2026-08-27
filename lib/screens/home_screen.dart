@@ -6,13 +6,13 @@ import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'login_screen.dart'; 
+import 'login_screen.dart';
 import '../models/app_user.dart';
 // 🔥 الحل الجذري هنا: إعطاء اسم مستعار للاستيراد لمنع اللخبطة
-import '../providers/auth_provider.dart' as my_auth; 
+import '../providers/auth_provider.dart' as my_auth;
 import '../providers/engagement_provider.dart';
 import '../services/call_service.dart';
-import '../services/callkit_service.dart'; 
+import '../services/callkit_service.dart';
 import 'admin_screen.dart';
 import 'call_screen.dart';
 import 'chat_screen.dart';
@@ -47,13 +47,17 @@ class _HomeScreenState extends State<HomeScreen> {
       CallService.instance.startIncomingCallListener(
         currentUserId: currentUser.id,
       );
-      _incomingCallSubscription = CallService.instance.incomingCallStream.listen(
-        (incomingCall) => _handleIncomingCall(incomingCall, currentUser),
-      );
+      _incomingCallSubscription = CallService.instance.incomingCallStream
+          .listen(
+            (incomingCall) => _handleIncomingCall(incomingCall, currentUser),
+          );
     }
   }
 
-  Future<void> _handleIncomingCall(IncomingCall incomingCall, AppUser currentUser) async {
+  Future<void> _handleIncomingCall(
+    IncomingCall incomingCall,
+    AppUser currentUser,
+  ) async {
     if (!mounted) return;
 
     await CallKitService.instance.showIncomingCall(
@@ -63,14 +67,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     StreamSubscription? callSubscription;
-    callSubscription = CallKitService.instance.callEventStream.listen((eventData) async {
-      
+    callSubscription = CallKitService.instance.callEventStream.listen((
+      eventData,
+    ) async {
       if (eventData['callId'] != incomingCall.callId) return;
 
       final action = eventData['event'];
 
       if (action == 'accept') {
-        callSubscription?.cancel(); 
+        callSubscription?.cancel();
         try {
           final session = await CallService.instance.answerCall(
             callId: incomingCall.callId,
@@ -81,11 +86,11 @@ class _HomeScreenState extends State<HomeScreen> {
             receiverName: incomingCall.receiverName,
             chatId: incomingCall.chatId,
           );
-          
+
           if (!mounted) return;
-          await Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => CallScreen(session: session),
-          ));
+          await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => CallScreen(session: session)),
+          );
         } catch (error) {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
@@ -93,8 +98,16 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
       } else if (action == 'decline' || action == 'timeout') {
-        callSubscription?.cancel(); 
-        await CallService.instance.rejectCall(incomingCall.callId); 
+        callSubscription?.cancel();
+        if (action == 'timeout') {
+          await CallService.instance.updateCallStatus(
+            callId: incomingCall.callId,
+            status: 'missed',
+          );
+          await CallKitService.instance.endCall(incomingCall.callId);
+        } else {
+          await CallService.instance.rejectCall(incomingCall.callId);
+        }
       }
     });
   }
@@ -117,11 +130,26 @@ class _HomeScreenState extends State<HomeScreen> {
 
   static const List<BottomNavigationBarItem> _navItems = [
     BottomNavigationBarItem(icon: Icon(Icons.home), label: 'الرئيسية'),
-    BottomNavigationBarItem(icon: Icon(Icons.chat_bubble_outline), label: 'الدردشات'),
-    BottomNavigationBarItem(icon: Icon(Icons.notifications_none), label: 'الإشعارات'),
-    BottomNavigationBarItem(icon: Icon(Icons.lightbulb_outline), label: 'أفكار'),
-    BottomNavigationBarItem(icon: Icon(Icons.settings_outlined), label: 'الإعدادات'),
-    BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'الملف الشخصي'),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.chat_bubble_outline),
+      label: 'الدردشات',
+    ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.notifications_none),
+      label: 'الإشعارات',
+    ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.lightbulb_outline),
+      label: 'أفكار',
+    ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.settings_outlined),
+      label: 'الإعدادات',
+    ),
+    BottomNavigationBarItem(
+      icon: Icon(Icons.person_outline),
+      label: 'الملف الشخصي',
+    ),
   ];
 
   @override
@@ -155,21 +183,29 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: const Icon(Icons.admin_panel_settings),
                     tooltip: 'لوحة المشرف',
                     onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AdminScreen()));
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const AdminScreen()),
+                      );
                     },
                   ),
                 IconButton(
                   icon: const Icon(Icons.search),
                   tooltip: 'بحث عن مستخدمين',
                   onPressed: () {
-                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const UserSearchScreen()));
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const UserSearchScreen(),
+                      ),
+                    );
                   },
                 ),
                 IconButton(
                   icon: const Icon(Icons.group_work_outlined),
                   tooltip: 'القنوات',
                   onPressed: () {
-                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ChannelsScreen()));
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const ChannelsScreen()),
+                    );
                   },
                 ),
                 IconButton(
@@ -177,14 +213,22 @@ class _HomeScreenState extends State<HomeScreen> {
                   tooltip: 'ميزات عالمية',
                   onPressed: () {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('التطبيق الآن يدعم تجربة أكثر عالمية مع لغات وإعدادات متقدمة.')),
+                      const SnackBar(
+                        content: Text(
+                          'التطبيق الآن يدعم تجربة أكثر عالمية مع لغات وإعدادات متقدمة.',
+                        ),
+                      ),
                     );
                   },
                 ),
                 IconButton(
                   tooltip: 'أطياف',
                   onPressed: () {
-                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AtyaafReelsScreen()));
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const AtyaafReelsScreen(),
+                      ),
+                    );
                   },
                   icon: Container(
                     padding: const EdgeInsets.all(6),
@@ -200,12 +244,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           color: const Color(0xFFE94057).withValues(alpha: 0.4),
                           blurRadius: 6,
                           offset: const Offset(0, 2),
-                        )
+                        ),
                       ],
                     ),
                     child: const Icon(
-                      Icons.video_library_rounded, 
-                      color: Colors.white, 
+                      Icons.video_library_rounded,
+                      color: Colors.white,
                       size: 22,
                     ),
                   ),
@@ -218,7 +262,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       showDialog(
                         context: context,
                         barrierDismissible: false,
-                        builder: (_) => const Center(child: CircularProgressIndicator(color: Colors.white)),
+                        builder: (_) => const Center(
+                          child: CircularProgressIndicator(color: Colors.white),
+                        ),
                       );
 
                       final prefs = await SharedPreferences.getInstance();
@@ -228,20 +274,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
                       if (context.mounted) {
                         Navigator.of(context).pushAndRemoveUntil(
-                          MaterialPageRoute(builder: (_) => const LoginScreen()),
+                          MaterialPageRoute(
+                            builder: (_) => const LoginScreen(),
+                          ),
                           (route) => false,
                         );
                       }
                     } catch (e) {
                       if (context.mounted) {
-                        Navigator.pop(context); 
+                        Navigator.pop(context);
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('فشل تسجيل الخروج: $e')),
                         );
                       }
                     }
                   },
-                )
+                ),
               ],
             ),
           ),
@@ -251,13 +299,22 @@ class _HomeScreenState extends State<HomeScreen> {
             if (_selectedIndex == 0)
               Container(
                 margin: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
+                ),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                     colors: [Color(0xFF5B6CFF), Color(0xFF2EC7A5)],
                   ),
                   borderRadius: BorderRadius.circular(20),
-                  boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 8, offset: Offset(0, 3))],
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black12,
+                      blurRadius: 8,
+                      offset: Offset(0, 3),
+                    ),
+                  ],
                 ),
                 child: Row(
                   children: [
@@ -267,12 +324,18 @@ class _HomeScreenState extends State<HomeScreen> {
                         children: [
                           Text(
                             engagementProvider.challengeText,
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                           const SizedBox(height: 4),
                           Text(
                             '${engagementProvider.points} نقطة • ${engagementProvider.streak} يوم متتالي',
-                            style: const TextStyle(color: Colors.white70, fontSize: 12),
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
                           ),
                         ],
                       ),
@@ -282,11 +345,16 @@ class _HomeScreenState extends State<HomeScreen> {
                         await engagementProvider.completeDailyChallenge();
                         if (context.mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('تم إكمال التحدي اليومي بنجاح 🎉')),
+                            const SnackBar(
+                              content: Text('تم إكمال التحدي اليومي بنجاح 🎉'),
+                            ),
                           );
                         }
                       },
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: const Color(0xFF5B6CFF)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: const Color(0xFF5B6CFF),
+                      ),
                       child: const Text('إكمال'),
                     ),
                   ],
@@ -315,7 +383,11 @@ class _HomeScreenState extends State<HomeScreen> {
             color: Theme.of(context).colorScheme.surface.withAlpha(240),
             borderRadius: BorderRadius.circular(24),
             boxShadow: const [
-              BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, 4)),
+              BoxShadow(
+                color: Colors.black12,
+                blurRadius: 10,
+                offset: Offset(0, 4),
+              ),
             ],
           ),
           child: ClipRRect(
@@ -334,7 +406,9 @@ class _HomeScreenState extends State<HomeScreen> {
               type: BottomNavigationBarType.fixed,
               elevation: 0,
               selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold),
-              unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500),
+              unselectedLabelStyle: const TextStyle(
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ),

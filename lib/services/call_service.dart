@@ -16,8 +16,9 @@ class CallSession {
   final String receiverId;
   final String receiverName;
   final String type;
+  String currentMediaType;
   final bool isCaller;
-  final bool isReceiverOnline; 
+  final bool isReceiverOnline;
   final RTCPeerConnection peerConnection;
   final MediaStream localStream;
   MediaStream? remoteStream;
@@ -25,14 +26,25 @@ class CallSession {
   bool callMessageCreated = false;
   bool isConnected = false;
   bool _isDisposed = false;
+  bool _hasRemoteDescription = false;
+  final List<RTCIceCandidate> _pendingRemoteCandidates = <RTCIceCandidate>[];
   DateTime? startedAt;
   DateTime? endedAt;
-  final StreamController<MediaStream?> _remoteStreamController = StreamController.broadcast();
-  final StreamController<String> _statusController = StreamController.broadcast();
+  final StreamController<MediaStream?> _remoteStreamController =
+      StreamController.broadcast();
+  final StreamController<String> _statusController =
+      StreamController.broadcast();
+  final StreamController<String> _mediaTypeController =
+      StreamController.broadcast();
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _callSubscription;
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _candidateSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _candidateSubscription;
   Timer? _autoEndTimer;
   String currentFacingMode = 'user';
+  bool _mediaSwitchInProgress = false;
+  String? _lastRenegotiationId;
+  String? _lastHandledRenegotiationId;
+  MediaStreamTrack? _videoTrack;
 
   CallSession({
     required this.callId,
@@ -43,13 +55,22 @@ class CallSession {
     required this.receiverName,
     required this.type,
     required this.isCaller,
-    this.isReceiverOnline = false, 
+    this.isReceiverOnline = false,
     required this.peerConnection,
     required this.localStream,
-  });
+  }) : currentMediaType = type;
 
   Stream<MediaStream?> get remoteStreamStream => _remoteStreamController.stream;
   Stream<String> get statusStream => _statusController.stream;
+  Stream<String> get mediaTypeStream => _mediaTypeController.stream;
+
+  void _updateMediaType(String mediaType) {
+    if (currentMediaType == mediaType) return;
+    currentMediaType = mediaType;
+    if (!_mediaTypeController.isClosed) {
+      _mediaTypeController.add(mediaType);
+    }
+  }
 
   void _updateRemoteStream(MediaStream? stream) {
     remoteStream = stream;
@@ -60,7 +81,10 @@ class CallSession {
     if (status == 'connected' && startedAt == null) {
       startedAt = DateTime.now();
     }
-    if (status == 'ended' || status == 'rejected' || status == 'canceled' || status == 'missed') {
+    if (status == 'ended' ||
+        status == 'rejected' ||
+        status == 'canceled' ||
+        status == 'missed') {
       endedAt ??= DateTime.now();
     }
     _statusController.add(status);
@@ -74,16 +98,34 @@ class CallSession {
 
   Future<void> scheduleAutoEnd(String callDocumentPath) async {
     _autoEndTimer?.cancel();
-    // 🔥 تم التعديل: 45 ثانية لتتطابق تماماً مع زمن الرنين في CallKitService
-    _autoEndTimer = Timer(const Duration(seconds: 45), () async {
+    _autoEndTimer = Timer(const Duration(seconds: 120), () async {
       final docRef = FirebaseFirestore.instance.doc(callDocumentPath);
       final snapshot = await docRef.get();
       final data = snapshot.data();
       final status = data == null ? null : data['status'] as String?;
-      if (status == 'calling' || status == 'ringing') {
-        await docRef.update({'status': 'missed'}); 
+      if (status == 'calling' || status == 'ringing' || status == 'accepted') {
+        await docRef.update({'status': 'missed'});
       }
     });
+  }
+
+  Future<void> setRemoteDescription(RTCSessionDescription description) async {
+    await peerConnection.setRemoteDescription(description);
+    _hasRemoteDescription = true;
+    for (final candidate in List<RTCIceCandidate>.from(
+      _pendingRemoteCandidates,
+    )) {
+      await peerConnection.addCandidate(candidate);
+    }
+    _pendingRemoteCandidates.clear();
+  }
+
+  Future<void> addRemoteCandidate(RTCIceCandidate candidate) async {
+    if (_hasRemoteDescription) {
+      await peerConnection.addCandidate(candidate);
+    } else {
+      _pendingRemoteCandidates.add(candidate);
+    }
   }
 
   void attachStreamListener() {
@@ -115,6 +157,75 @@ class CallSession {
     if (videoTracks.isEmpty) return;
     final track = videoTracks.first;
     track.enabled = !track.enabled;
+  }
+
+  Future<void> switchMediaType({required bool enableVideo}) async {
+    if (_isDisposed || _mediaSwitchInProgress) return;
+    _mediaSwitchInProgress = true;
+    try {
+      final senders = await peerConnection.getSenders();
+      RTCRtpSender? videoSender;
+      for (final sender in senders) {
+        if (sender.track?.kind == 'video') {
+          videoSender = sender;
+          break;
+        }
+      }
+
+      if (enableVideo) {
+        await _ensureCameraPermission();
+        final cameraStream = await navigator.mediaDevices.getUserMedia({
+          'audio': false,
+          'video': {'facingMode': currentFacingMode},
+        });
+        final newTrack = cameraStream.getVideoTracks().first;
+        localStream.addTrack(newTrack);
+        if (videoSender == null) {
+          videoSender = await peerConnection.addTrack(newTrack, localStream);
+        } else {
+          await videoSender.replaceTrack(newTrack);
+        }
+        _videoTrack = newTrack;
+      } else {
+        final track = _videoTrack ?? localStream.getVideoTracks().firstOrNull;
+        if (track != null) {
+          if (videoSender != null) {
+            await videoSender.replaceTrack(null);
+          }
+          localStream.removeTrack(track);
+          track.stop();
+          _videoTrack = null;
+        }
+      }
+
+      final mediaType = enableVideo ? 'video' : 'audio';
+      await _renegotiateMedia(mediaType);
+      _updateMediaType(mediaType);
+    } finally {
+      _mediaSwitchInProgress = false;
+    }
+  }
+
+  Future<void> _ensureCameraPermission() async {
+    final status = await Permission.camera.request();
+    if (!status.isGranted) {
+      throw StateError('Camera permission is required for video calls.');
+    }
+  }
+
+  Future<void> _renegotiateMedia(String mediaType) async {
+    final renegotiationId =
+        '${callId}_${DateTime.now().microsecondsSinceEpoch}';
+    _lastRenegotiationId = renegotiationId;
+    final offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+    await FirebaseFirestore.instance.collection('calls').doc(callId).update({
+      'type': mediaType,
+      'renegotiationId': renegotiationId,
+      'renegotiationBy': isCaller ? callerId : receiverId,
+      'renegotiationOffer': {'type': offer.type, 'sdp': offer.sdp},
+      'renegotiationAnswer': FieldValue.delete(),
+    });
   }
 
   Future<void> switchCamera() async {
@@ -160,6 +271,9 @@ class CallSession {
     if (!_statusController.isClosed) {
       _statusController.close();
     }
+    if (!_mediaTypeController.isClosed) {
+      _mediaTypeController.close();
+    }
     remoteStream?.getTracks().forEach((track) => track.stop());
     endedAt ??= DateTime.now();
     await peerConnection.close();
@@ -179,13 +293,15 @@ class CallService {
     'iceServers': [
       {'urls': 'stun:stun.l.google.com:19302'},
       {'urls': 'stun:stun1.l.google.com:19302'},
-    ]
+    ],
   };
 
-  final StreamController<IncomingCall> _incomingCallController = StreamController<IncomingCall>.broadcast();
+  final StreamController<IncomingCall> _incomingCallController =
+      StreamController<IncomingCall>.broadcast();
   Stream<IncomingCall> get incomingCallStream => _incomingCallController.stream;
 
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _incomingCallSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _incomingCallSubscription;
   CallSession? activeSession;
   bool _isDisposed = false;
 
@@ -265,7 +381,9 @@ class CallService {
         if (session.isCaller) {
           await _createCallHistoryMessage(
             session: session,
-            text: session.type == 'video' ? 'بدء مكالمة فيديو' : 'بدء مكالمة صوتية',
+            text: session.type == 'video'
+                ? 'بدء مكالمة فيديو'
+                : 'بدء مكالمة صوتية',
           );
         }
       }
@@ -286,10 +404,13 @@ class CallService {
     final callDocRef = _firestore.collection('calls').doc();
     final localStream = await _getUserMedia(video: type == 'video');
     final peerConnection = await _createPeerConnection();
-    
+
     bool isOnline = false;
     try {
-      final userDoc = await _firestore.collection('users').doc(receiverId).get();
+      final userDoc = await _firestore
+          .collection('users')
+          .doc(receiverId)
+          .get();
       if (userDoc.exists) {
         isOnline = userDoc.data()?['isOnline'] ?? false;
       }
@@ -394,7 +515,7 @@ class CallService {
       throw StateError('Offer data missing');
     }
 
-    await peerConnection.setRemoteDescription(
+    await activeSession!.setRemoteDescription(
       RTCSessionDescription(offer['sdp'] as String, offer['type'] as String),
     );
 
@@ -454,32 +575,92 @@ class CallService {
   void _listenToCallUpdates(String callId) {
     final docRef = _firestore.collection('calls').doc(callId);
     activeSession?._callSubscription?.cancel();
-    activeSession?._callSubscription = docRef.snapshots().listen((snapshot) async {
+    activeSession?._callSubscription = docRef.snapshots().listen((
+      snapshot,
+    ) async {
       final data = snapshot.data();
       if (data == null) return;
       final status = data['status'] as String?;
       final answer = data['answer'] as Map<String, dynamic>?;
       _updateStatus(status ?? 'unknown');
 
-      if (status == 'accepted' && activeSession?.isCaller == true && answer != null) {
-        final remoteDescription = RTCSessionDescription(answer['sdp'] as String, answer['type'] as String);
-        await activeSession?.peerConnection.setRemoteDescription(remoteDescription);
+      if (status == 'accepted' &&
+          activeSession?.isCaller == true &&
+          answer != null) {
+        final remoteDescription = RTCSessionDescription(
+          answer['sdp'] as String,
+          answer['type'] as String,
+        );
+        await activeSession?.setRemoteDescription(remoteDescription);
+      }
+
+      final session = activeSession;
+      final remoteMediaType = data['type'] as String?;
+      if (session != null &&
+          remoteMediaType != null &&
+          remoteMediaType != session.currentMediaType &&
+          (remoteMediaType == 'audio' || remoteMediaType == 'video')) {
+        session._updateMediaType(remoteMediaType);
+      }
+      final renegotiationId = data['renegotiationId'] as String?;
+      final renegotiationBy = data['renegotiationBy'] as String?;
+      final renegotiationOffer =
+          data['renegotiationOffer'] as Map<String, dynamic>?;
+      final renegotiationAnswer =
+          data['renegotiationAnswer'] as Map<String, dynamic>?;
+      if (session != null &&
+          renegotiationId != null &&
+          renegotiationBy != null &&
+          renegotiationOffer != null &&
+          renegotiationBy !=
+              (session.isCaller ? session.callerId : session.receiverId) &&
+          renegotiationId != session._lastHandledRenegotiationId) {
+        session._lastHandledRenegotiationId = renegotiationId;
+        await session.setRemoteDescription(
+          RTCSessionDescription(
+            renegotiationOffer['sdp'] as String,
+            renegotiationOffer['type'] as String,
+          ),
+        );
+        final renegotiationAnswerDescription = await session.peerConnection
+            .createAnswer();
+        await session.peerConnection.setLocalDescription(
+          renegotiationAnswerDescription,
+        );
+        await docRef.update({
+          'renegotiationAnswer': {
+            'type': renegotiationAnswerDescription.type,
+            'sdp': renegotiationAnswerDescription.sdp,
+          },
+        });
+      } else if (session != null &&
+          renegotiationId != null &&
+          renegotiationId == session._lastRenegotiationId &&
+          renegotiationAnswer != null) {
+        await session.setRemoteDescription(
+          RTCSessionDescription(
+            renegotiationAnswer['sdp'] as String,
+            renegotiationAnswer['type'] as String,
+          ),
+        );
       }
 
       // 🔥 تم التعديل الجذري هنا لضمان إغلاق CallKit وتنبيهات المكالمات الفائتة
-      if (status == 'rejected' || status == 'ended' || status == 'canceled' || status == 'missed') {
-        
+      if (status == 'rejected' ||
+          status == 'ended' ||
+          status == 'canceled' ||
+          status == 'missed') {
         // إيقاف شاشة CallKit فوراً
         await CallKitService.instance.endCall(callId);
-        
+
         final session = activeSession;
-        
+
         // إظهار إشعار مكالمة فائتة للمستلم إذا انقضى الوقت أو المتصل قفل
         if (status == 'missed' && session?.isCaller == false) {
-           await CallKitService.instance.showMissedCall(
-             callId: callId, 
-             callerName: session?.callerName ?? 'مكالمة فائتة'
-           );
+          await CallKitService.instance.showMissedCall(
+            callId: callId,
+            callerName: session?.callerName ?? 'مكالمة فائتة',
+          );
         }
 
         activeSession = null;
@@ -496,10 +677,18 @@ class CallService {
     });
   }
 
-  Future<void> _listenToRemoteCandidates(String callId, String collectionPath) async {
-    final collectionRef = _firestore.collection('calls').doc(callId).collection(collectionPath);
+  Future<void> _listenToRemoteCandidates(
+    String callId,
+    String collectionPath,
+  ) async {
+    final collectionRef = _firestore
+        .collection('calls')
+        .doc(callId)
+        .collection(collectionPath);
     activeSession?._candidateSubscription?.cancel();
-    activeSession?._candidateSubscription = collectionRef.snapshots().listen((snapshot) async {
+    activeSession?._candidateSubscription = collectionRef.snapshots().listen((
+      snapshot,
+    ) async {
       for (final change in snapshot.docChanges) {
         if (change.type == DocumentChangeType.added) {
           final data = change.doc.data();
@@ -512,7 +701,7 @@ class CallService {
           );
 
           try {
-            await activeSession?.peerConnection.addCandidate(candidate);
+            await activeSession?.addRemoteCandidate(candidate);
           } catch (_) {}
         }
       }
@@ -524,7 +713,8 @@ class CallService {
     required String text,
     String status = MessageStatus.sent,
   }) async {
-    if (session.callMessageCreated || session.callMessageId?.isNotEmpty == true) {
+    if (session.callMessageCreated ||
+        session.callMessageId?.isNotEmpty == true) {
       return;
     }
 
@@ -553,9 +743,7 @@ class CallService {
     }
   }
 
-  void startIncomingCallListener({
-    required String currentUserId,
-  }) {
+  void startIncomingCallListener({required String currentUserId}) {
     _incomingCallSubscription?.cancel();
     _incomingCallSubscription = _firestore
         .collection('calls')
@@ -563,40 +751,41 @@ class CallService {
         .where('status', isEqualTo: 'calling')
         .snapshots()
         .listen((snapshot) {
-      
-      for (final change in snapshot.docChanges) {
-        final callId = change.doc.id;
+          for (final change in snapshot.docChanges) {
+            final callId = change.doc.id;
 
-        // 🔥 التعديل الجذري: إذا تم حذف أو تعديل المكالمة (المتصل قفل أو انتهى الوقت) نغلق CallKit
-        if (change.type == DocumentChangeType.removed) {
-          CallKitService.instance.endCall(callId);
-          continue;
-        }
+            // 🔥 التعديل الجذري: إذا تم حذف أو تعديل المكالمة (المتصل قفل أو انتهى الوقت) نغلق CallKit
+            if (change.type == DocumentChangeType.removed) {
+              CallKitService.instance.endCall(callId);
+              continue;
+            }
 
-        if (change.type == DocumentChangeType.added) {
-          if (activeSession != null) return;
+            if (change.type == DocumentChangeType.added) {
+              if (activeSession != null) return;
 
-          final data = change.doc.data();
-          if (data == null) continue;
+              final data = change.doc.data();
+              if (data == null) continue;
 
-          final callerName = data['callerName'] as String? ?? 'مستخدم';
-          final callerId = data['callerId'] as String? ?? '';
-          final chatId = data['chatId'] as String? ?? '';
-          final callType = data['type'] as String? ?? 'audio';
-          final receiverName = data['receiverName'] as String? ?? '';
+              final callerName = data['callerName'] as String? ?? 'مستخدم';
+              final callerId = data['callerId'] as String? ?? '';
+              final chatId = data['chatId'] as String? ?? '';
+              final callType = data['type'] as String? ?? 'audio';
+              final receiverName = data['receiverName'] as String? ?? '';
 
-          _incomingCallController.add(IncomingCall(
-            callId: callId,
-            callerId: callerId,
-            callerName: callerName,
-            receiverId: currentUserId,
-            receiverName: receiverName,
-            chatId: chatId,
-            type: callType,
-          ));
-        }
-      }
-    });
+              _incomingCallController.add(
+                IncomingCall(
+                  callId: callId,
+                  callerId: callerId,
+                  callerName: callerName,
+                  receiverId: currentUserId,
+                  receiverName: receiverName,
+                  chatId: chatId,
+                  type: callType,
+                ),
+              );
+            }
+          }
+        });
   }
 
   void stopIncomingCallListener() {
@@ -658,7 +847,9 @@ class CallState {
 
 class CallNotSupportedException implements Exception {
   final String message;
-  CallNotSupportedException([this.message = 'Call is not supported on this platform.']);
+  CallNotSupportedException([
+    this.message = 'Call is not supported on this platform.',
+  ]);
 
   @override
   String toString() => message;

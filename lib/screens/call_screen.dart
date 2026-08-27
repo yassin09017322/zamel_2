@@ -21,18 +21,22 @@ class _CallScreenState extends State<CallScreen> {
   bool _speakerEnabled = false;
   bool _isMinimized = false;
   bool _showQuickNote = false;
-  
+
   // متغير جديد للتحكم في نوع المكالمة (للتبديل بين الصوت والفيديو)
   late bool _isVideoCall;
-  
+
   String _connectionStatus = 'جارٍ الاتصال...';
   Duration _callDuration = Duration.zero;
+  DateTime? _connectedAt;
+  bool _isConnected = false;
+  bool _isSwitchingMedia = false;
   late RTCVideoRenderer _localRenderer;
   late RTCVideoRenderer _remoteRenderer;
   Timer? _durationTimer;
   Timer? _offlineRingTimer; // مؤقت للرنين المتقطع
   StreamSubscription<MediaStream?>? _remoteStreamSubscription;
   StreamSubscription<String>? _statusSubscription;
+  StreamSubscription<String>? _mediaTypeSubscription;
 
   bool _isRinging = false;
 
@@ -41,16 +45,20 @@ class _CallScreenState extends State<CallScreen> {
     super.initState();
     _localRenderer = RTCVideoRenderer();
     _remoteRenderer = RTCVideoRenderer();
-    
+
     // تحديد نوع المكالمة عند البدء
     _isVideoCall = widget.session.type == 'video';
-    
+
     _initializeRenderers();
 
-    // تشغيل صوت الاتصال فوراً عند فتح الشاشة (كمتصل)
-    _playRingtone();
+    // Ringback belongs to the caller; incoming ringing is owned by CallKit.
+    if (widget.session.isCaller) {
+      _playRingtone();
+    }
 
-    _remoteStreamSubscription = widget.session.remoteStreamStream.listen((stream) {
+    _remoteStreamSubscription = widget.session.remoteStreamStream.listen((
+      stream,
+    ) {
       if (!mounted) return;
       _remoteRenderer.srcObject = stream;
       if (stream != null) {
@@ -64,40 +72,61 @@ class _CallScreenState extends State<CallScreen> {
     _statusSubscription = widget.session.statusStream.listen((status) {
       if (!mounted) return;
       final normalized = status.toLowerCase();
-      
-      if (normalized == 'connected' || normalized == 'accepted') {
+
+      if (normalized != 'connected') {
+        _isConnected = false;
+        _stopCallTimer();
+      }
+
+      if (normalized == 'connected') {
         _stopRingtone();
-        
-        // التعديل 1: بدء المؤقت فقط عند الرد على المكالمة
-        if (_durationTimer == null || !_durationTimer!.isActive) {
+
+        if (!_isConnected) {
+          _isConnected = true;
+          _connectedAt = DateTime.now();
+          _callDuration = Duration.zero;
           _startCallTimer();
         }
-        
+
         setState(() {
           _connectionStatus = 'متصل';
+        });
+      } else if (normalized == 'accepted') {
+        _stopRingtone();
+        setState(() {
+          _connectionStatus = 'جارٍ تهيئة الاتصال...';
         });
       } else if (normalized == 'calling' || normalized == 'ringing') {
         _playRingtone();
         setState(() {
           _connectionStatus = 'جارٍ الاتصال...';
         });
-      } else if (normalized == 'ended' || normalized == 'rejected' || normalized == 'canceled' || normalized == 'missed') {
+      } else if (normalized == 'ended' ||
+          normalized == 'rejected' ||
+          normalized == 'canceled' ||
+          normalized == 'missed') {
         _stopRingtone();
-        _durationTimer?.cancel();
         setState(() {
           _connectionStatus = 'تم إنهاء المكالمة';
         });
         Navigator.of(context).maybePop();
       }
     });
-    
+    _mediaTypeSubscription = widget.session.mediaTypeStream.listen((type) {
+      if (!mounted || (type != 'audio' && type != 'video')) return;
+      setState(() {
+        _isVideoCall = type == 'video';
+        _videoEnabled = _isVideoCall;
+      });
+    });
+
     // تم إزالة استدعاء _startCallTimer() من هنا حتى لا يبدأ العد قبل الرد
   }
 
   void _playRingtone() {
     if (!_isRinging) {
       _isRinging = true;
-      
+
       // التعديل 2: محاكاة صوت "طوط... طوط..." للمتصل
       if (widget.session.isReceiverOnline) {
         _playOfflineBeep(); // نغمة أولى
@@ -124,7 +153,7 @@ class _CallScreenState extends State<CallScreen> {
 
   void _playOfflineBeep() {
     FlutterRingtonePlayer().play(
-      android: AndroidSounds.notification, 
+      android: AndroidSounds.notification,
       ios: IosSounds.glass,
       volume: 0.3,
     );
@@ -143,9 +172,19 @@ class _CallScreenState extends State<CallScreen> {
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() {
-        _callDuration += const Duration(seconds: 1);
+        final connectedAt = _connectedAt;
+        _callDuration = connectedAt == null
+            ? Duration.zero
+            : DateTime.now().difference(connectedAt);
       });
     });
+  }
+
+  void _stopCallTimer() {
+    _durationTimer?.cancel();
+    _durationTimer = null;
+    _connectedAt = null;
+    _callDuration = Duration.zero;
   }
 
   String _formatDuration(Duration duration) {
@@ -190,14 +229,25 @@ class _CallScreenState extends State<CallScreen> {
 
   // التعديل 3: دالة التبديل الجذري بين المكالمة الصوتية والفيديو
   Future<void> _switchCallType() async {
-    // تفعيل أو إلغاء تفعيل الكاميرا برمجياً عبر الـ Session
-    await widget.session.toggleCamera();
-    
-    if (mounted) {
+    if (_isSwitchingMedia) return;
+    final enableVideo = !_isVideoCall;
+    setState(() => _isSwitchingMedia = true);
+    try {
+      await widget.session.switchMediaType(enableVideo: enableVideo);
+      if (!mounted) return;
+      _localRenderer.srcObject = widget.session.localStream;
       setState(() {
-        _isVideoCall = !_isVideoCall;
-        _videoEnabled = _isVideoCall;
+        _isVideoCall = enableVideo;
+        _videoEnabled = enableVideo;
       });
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تبديل نوع المكالمة: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSwitchingMedia = false);
     }
   }
 
@@ -227,9 +277,10 @@ class _CallScreenState extends State<CallScreen> {
   @override
   void dispose() {
     _stopRingtone();
-    _durationTimer?.cancel();
+    _stopCallTimer();
     _remoteStreamSubscription?.cancel();
     _statusSubscription?.cancel();
+    _mediaTypeSubscription?.cancel();
     _localRenderer.srcObject = null;
     _remoteRenderer.srcObject = null;
     _localRenderer.dispose();
@@ -250,18 +301,22 @@ class _CallScreenState extends State<CallScreen> {
             Positioned.fill(
               child: _isVideoCall
                   ? hasRemote
-                      ? RTCVideoView(
-                          _remoteRenderer,
-                          objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
-                        )
-                      : Container(
-                          color: Colors.black,
-                          alignment: Alignment.center,
-                          child: const Text(
-                            'جارٍ الاتصال...',
-                            style: TextStyle(color: Colors.white, fontSize: 18),
-                          ),
-                        )
+                        ? RTCVideoView(
+                            _remoteRenderer,
+                            objectFit: RTCVideoViewObjectFit
+                                .RTCVideoViewObjectFitCover,
+                          )
+                        : Container(
+                            color: Colors.black,
+                            alignment: Alignment.center,
+                            child: const Text(
+                              'جارٍ الاتصال...',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                              ),
+                            ),
+                          )
                   : Container(
                       color: Colors.black,
                       alignment: Alignment.center,
@@ -272,7 +327,10 @@ class _CallScreenState extends State<CallScreen> {
                           const SizedBox(height: 12),
                           Text(
                             'مكالمة صوتية مع ${widget.session.receiverName}',
-                            style: const TextStyle(color: Colors.white, fontSize: 18),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 18,
+                            ),
                             textAlign: TextAlign.center,
                           ),
                         ],
@@ -292,12 +350,17 @@ class _CallScreenState extends State<CallScreen> {
                   ),
                   child: _localRenderer.srcObject == null || !_videoEnabled
                       ? const Center(
-                          child: Icon(Icons.videocam_off, color: Colors.white70, size: 40),
+                          child: Icon(
+                            Icons.videocam_off,
+                            color: Colors.white70,
+                            size: 40,
+                          ),
                         )
                       : RTCVideoView(
                           _localRenderer,
                           mirror: true,
-                          objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+                          objectFit:
+                              RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                         ),
                 ),
               ),
@@ -305,7 +368,10 @@ class _CallScreenState extends State<CallScreen> {
               top: 16,
               right: 16,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.4),
                   borderRadius: BorderRadius.circular(14),
@@ -315,23 +381,39 @@ class _CallScreenState extends State<CallScreen> {
                   children: [
                     Text(
                       widget.session.receiverName,
-                      style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       _isVideoCall ? 'مكالمة فيديو' : 'مكالمة صوتية',
-                      style: const TextStyle(color: Colors.white70, fontSize: 14),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       _connectionStatus,
-                      style: const TextStyle(color: Colors.lightBlueAccent, fontSize: 13),
+                      style: const TextStyle(
+                        color: Colors.lightBlueAccent,
+                        fontSize: 13,
+                      ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _formatDuration(_callDuration),
-                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
-                    ),
+                    if (_isConnected) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _formatDuration(_callDuration),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -359,7 +441,10 @@ class _CallScreenState extends State<CallScreen> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.chat_bubble_outline, color: Colors.white70),
+                      const Icon(
+                        Icons.chat_bubble_outline,
+                        color: Colors.white70,
+                      ),
                       const SizedBox(width: 8),
                       const Expanded(
                         child: Text(
@@ -378,9 +463,8 @@ class _CallScreenState extends State<CallScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  _CallActionButton(
-                    icon: _audioEnabled ? Icons.mic : Icons.mic_off,
-                    color: _audioEnabled ? Colors.blue : Colors.grey.shade700,
+                  _MuteCallButton(
+                    isEnabled: _audioEnabled,
                     onPressed: _toggleAudio,
                   ),
                   _CallActionButton(
@@ -440,6 +524,63 @@ class _CallActionButton extends StatelessWidget {
       fillColor: color,
       constraints: const BoxConstraints.tightFor(width: 60, height: 60),
       child: Icon(icon, color: Colors.white),
+    );
+  }
+}
+
+class _MuteCallButton extends StatelessWidget {
+  final bool isEnabled;
+  final VoidCallback onPressed;
+
+  const _MuteCallButton({required this.isEnabled, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = isEnabled ? 'كتم الميكروفون' : 'تشغيل الميكروفون';
+    final backgroundColor = isEnabled ? Colors.blue : Colors.red.shade700;
+
+    return Semantics(
+      button: true,
+      label: label,
+      child: Tooltip(
+        message: label,
+        child: Material(
+          color: Colors.transparent,
+          shape: const CircleBorder(),
+          child: InkWell(
+            onTap: onPressed,
+            customBorder: const CircleBorder(),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: backgroundColor,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: backgroundColor.withOpacity(0.35),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                transitionBuilder: (child, animation) =>
+                    ScaleTransition(scale: animation, child: child),
+                child: Icon(
+                  isEnabled ? Icons.mic : Icons.mic_off,
+                  key: ValueKey(isEnabled),
+                  color: Colors.white,
+                  size: 30,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -52,6 +52,7 @@ class _FeedScreenState extends State<FeedScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
+        int? selectedDuration;
         return Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom,
@@ -148,6 +149,10 @@ class _FeedScreenState extends State<FeedScreen> {
                   ),
                   const SizedBox(height: 12),
                   StoryUploadWidget(
+                    beforeUpload: () async {
+                      selectedDuration = await _askStoryDuration(context, 24);
+                      return selectedDuration != null;
+                    },
                     onUpload:
                         ({
                           file,
@@ -156,10 +161,7 @@ class _FeedScreenState extends State<FeedScreen> {
                           cloudUrl,
                           required String mediaType,
                         }) async {
-                          final durationSelected = await _askStoryDuration(
-                            context,
-                            24,
-                          );
+                          final durationSelected = selectedDuration;
                           if (durationSelected == null) return;
 
                           final mediaService = MediaService();

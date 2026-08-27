@@ -10,56 +10,48 @@ class CallKitService {
   static final CallKitService instance = CallKitService._();
 
   // قناة اتصال (Stream) لنقل قرار المستخدم (رد / رفض) إلى شاشة المحادثة
-  final StreamController<Map<String, dynamic>> _callEventController = StreamController<Map<String, dynamic>>.broadcast();
-  Stream<Map<String, dynamic>> get callEventStream => _callEventController.stream;
+  final StreamController<Map<String, dynamic>> _callEventController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get callEventStream =>
+      _callEventController.stream;
 
   // الاستماع لرد فعل المستخدم من شاشة الاتصال الأصلية
   void _initEvents() {
     // 🔥 تم استخدام 'dynamic' هنا لتخطي كل أخطاء (The getter isn't defined) و (Undefined name Event)
     // التي ظهرت في محرر الأكواد بسبب اختلاف إصدارات المكتبة
-    FlutterCallkitIncoming.onEvent.listen((dynamic event) {
+    FlutterCallkitIncoming.onEvent.listen((event) {
       if (event == null) return;
 
       try {
-        String action = '';
-        final eventStr = event.toString();
-        
-        // استخراج نوع الحدث بذكاء من النص لتفادي أخطاء الـ Enums
-        if (eventStr.contains('Accept') || eventStr.contains('ACCEPT')) {
-          action = 'accept';
-        } else if (eventStr.contains('Decline') || eventStr.contains('DECLINE')) {
-          action = 'decline';
-        } else if (eventStr.contains('Timeout') || eventStr.contains('TIMEOUT')) {
-          action = 'timeout';
-        }
-
-        String callId = '';
+        String? action;
+        String? callId;
         String type = 'audio';
 
-        try {
-          // استخراج البيانات ديناميكياً لتفادي خطأ (The getter 'body' isn't defined)
-          final dynamic bodyData = event.body;
-          if (bodyData != null && bodyData is Map) {
-            if (bodyData.containsKey('extra') && bodyData['extra'] != null) {
-              callId = bodyData['extra']['callId'] ?? '';
-              type = bodyData['extra']['type'] ?? 'audio';
-            } else {
-              callId = bodyData['id'] ?? '';
-            }
-          }
-        } catch (_) {
-          // في حال عدم دعم إصدار المكتبة لـ body سيتم تخطي الخطأ بأمان
+        if (event is CallEventActionCallAccept) {
+          action = 'accept';
+          callId = event.callKitParams.id;
+          type = (event.callKitParams.extra?['type'] as String?) ?? 'audio';
+        } else if (event is CallEventActionCallDecline) {
+          action = 'decline';
+          callId = event.callKitParams.id;
+          type = (event.callKitParams.extra?['type'] as String?) ?? 'audio';
+        } else if (event is CallEventActionCallTimeout) {
+          action = 'timeout';
+          callId = event.id;
+        } else if (event is CallEventActionCallEnded) {
+          action = 'ended';
+          callId = event.callKitParams.id;
         }
 
-        if (action.isNotEmpty) {
+        if (action != null && callId != null && callId.isNotEmpty) {
           _callEventController.add({
             'event': action,
             'callId': callId,
             'type': type,
           });
         }
-      } catch (e) {
-        debugPrint('Error parsing CallKit event: $e');
+      } catch (error) {
+        debugPrint('Error parsing CallKit event: $error');
       }
     });
   }
@@ -76,7 +68,7 @@ class CallKitService {
       appName: 'ZAMEL',
       handle: type == 'video' ? 'مكالمة فيديو 🎥' : 'مكالمة صوتية 📞',
       type: type == 'video' ? 1 : 0,
-      duration: 45000, // مدة الرنين 45 ثانية
+      duration: 120000, // مدة الرنين دقيقتان
       missedCallNotification: const NotificationParams(
         showNotification: true,
         isShowCallback: false, // تعطيل معاودة الاتصال مؤقتاً لتقليل الأخطاء
