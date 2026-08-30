@@ -61,12 +61,6 @@ class _HomeScreenState extends State<HomeScreen> {
   ) async {
     if (!mounted) return;
 
-    await CallKitService.instance.showIncomingCall(
-      callId: incomingCall.callId,
-      callerName: incomingCall.callerName,
-      type: incomingCall.type,
-    );
-
     StreamSubscription? callSubscription;
     callSubscription = CallKitService.instance.callEventStream.listen((
       eventData,
@@ -93,6 +87,11 @@ class _HomeScreenState extends State<HomeScreen> {
             MaterialPageRoute(builder: (_) => CallScreen(session: session)),
           );
         } catch (error) {
+          await CallService.instance.updateCallStatus(
+            callId: incomingCall.callId,
+            status: 'failed',
+          );
+          await CallKitService.instance.endCall(incomingCall.callId);
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('فشل استقبال المكالمة: $error')),
@@ -105,12 +104,31 @@ class _HomeScreenState extends State<HomeScreen> {
             callId: incomingCall.callId,
             status: 'missed',
           );
+          await CallService.instance.finalizeCallWithoutSession(
+            callId: incomingCall.callId,
+            status: 'missed',
+          );
           await CallKitService.instance.endCall(incomingCall.callId);
         } else {
           await CallService.instance.rejectCall(incomingCall.callId);
         }
       }
     });
+
+    try {
+      await CallKitService.instance.showIncomingCall(
+        callId: incomingCall.callId,
+        callerName: incomingCall.callerName,
+        type: incomingCall.type,
+      );
+    } catch (error) {
+      await callSubscription.cancel();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر إظهار المكالمة الواردة: $error')),
+        );
+      }
+    }
   }
 
   @override

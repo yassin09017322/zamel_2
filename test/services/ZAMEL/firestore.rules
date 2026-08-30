@@ -25,6 +25,27 @@ service cloud.firestore {
       );
     }
 
+    function canPostToChannel(channelId) {
+      let channel = get(/databases/$(database)/documents/channels/$(channelId)).data;
+      return isSignedIn() && (
+        channel.adminId == request.auth.uid
+        || isAdminUser()
+        || (
+          channel.moderators.hasAny([request.auth.uid])
+          && (!('adminPermissions' in channel)
+            || !(request.auth.uid in channel.adminPermissions)
+            || !('canPost' in channel.adminPermissions[request.auth.uid])
+            || channel.adminPermissions[request.auth.uid].canPost != false)
+        )
+        || (
+          ('adminPermissions' in channel)
+          && (request.auth.uid in channel.adminPermissions)
+          && ('canPost' in channel.adminPermissions[request.auth.uid])
+          && channel.adminPermissions[request.auth.uid].canPost == true
+        )
+      );
+    }
+
     function noSensitiveUserFieldChanges() {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'isBanned', 'canPost']);
     }
@@ -92,6 +113,17 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
+    match /atyaf_reels/{reelId}/comments/{commentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.reelId == reelId
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.text is string
+        && request.resource.data.text.size() > 0;
+      allow update, delete: if isAdmin()
+        || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
     match /users/{userId}/savedAtyaaf/{savedVideoId} {
       allow read, write: if isSignedIn() && request.auth.uid == userId;
     }
@@ -113,7 +145,7 @@ service cloud.firestore {
     match /channels/{channelId}/messages/{messageId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn()
-        && isChannelAdmin(channelId)
+        && canPostToChannel(channelId)
         && request.resource.data.channelId == channelId
         && request.resource.data.senderId == request.auth.uid
         && request.resource.data.mediaType in ['text', 'image', 'video', 'file', 'link']

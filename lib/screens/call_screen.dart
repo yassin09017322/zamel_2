@@ -30,6 +30,7 @@ class _CallScreenState extends State<CallScreen> {
   DateTime? _connectedAt;
   bool _isConnected = false;
   bool _isSwitchingMedia = false;
+  bool _isSwitchingCamera = false;
   late RTCVideoRenderer _localRenderer;
   late RTCVideoRenderer _remoteRenderer;
   Timer? _durationTimer;
@@ -97,14 +98,15 @@ class _CallScreenState extends State<CallScreen> {
           _connectionStatus = 'جارٍ تهيئة الاتصال...';
         });
       } else if (normalized == 'calling' || normalized == 'ringing') {
-        _playRingtone();
+        if (widget.session.isCaller) _playRingtone();
         setState(() {
           _connectionStatus = 'جارٍ الاتصال...';
         });
       } else if (normalized == 'ended' ||
           normalized == 'rejected' ||
           normalized == 'canceled' ||
-          normalized == 'missed') {
+          normalized == 'missed' ||
+          normalized == 'failed') {
         _stopRingtone();
         setState(() {
           _connectionStatus = 'تم إنهاء المكالمة';
@@ -210,11 +212,36 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> _toggleAudio() async {
-    await widget.session.toggleMute();
-    if (mounted) {
-      setState(() {
-        _audioEnabled = !_audioEnabled;
-      });
+    try {
+      await widget.session.toggleMute();
+      if (mounted) {
+        setState(() {
+          _audioEnabled = !_audioEnabled;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تغيير حالة الميكروفون: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _switchCamera() async {
+    if (_isSwitchingCamera || !_isVideoCall) return;
+    setState(() => _isSwitchingCamera = true);
+    try {
+      await widget.session.switchCamera();
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تبديل الكاميرا: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSwitchingCamera = false);
     }
   }
 
@@ -489,11 +516,10 @@ class _CallScreenState extends State<CallScreen> {
                   if (_isVideoCall)
                     _CallActionButton(
                       icon: Icons.cameraswitch,
-                      color: Colors.white,
-                      onPressed: () async {
-                        await widget.session.switchCamera();
-                        setState(() {});
-                      },
+                      color: _isSwitchingCamera
+                          ? Colors.orange
+                          : const Color(0xFF5B6CFF),
+                      onPressed: _isSwitchingCamera ? () {} : _switchCamera,
                     ),
                 ],
               ),
@@ -537,7 +563,9 @@ class _MuteCallButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = isEnabled ? 'كتم الميكروفون' : 'تشغيل الميكروفون';
-    final backgroundColor = isEnabled ? Colors.blue : Colors.red.shade700;
+    final backgroundColor = isEnabled
+      ? Colors.blue
+      : const Color(0xFFC62828);
 
     return Semantics(
       button: true,

@@ -1,12 +1,15 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import '../models/chat_message.dart';
 import 'chat_service.dart';
 import 'callkit_service.dart'; // 🔥 تم الإضافة: لربط المحرك بشاشة الاتصال الأصلية
+import 'notification_service.dart';
 
 class CallSession {
   final String callId;
@@ -25,6 +28,7 @@ class CallSession {
   String? callMessageId;
   bool callMessageCreated = false;
   bool isConnected = false;
+  bool isEnding = false;
   bool _isDisposed = false;
   bool _hasRemoteDescription = false;
   final List<RTCIceCandidate> _pendingRemoteCandidates = <RTCIceCandidate>[];
@@ -84,7 +88,8 @@ class CallSession {
     if (status == 'ended' ||
         status == 'rejected' ||
         status == 'canceled' ||
-        status == 'missed') {
+      status == 'missed' ||
+      status == 'failed') {
       endedAt ??= DateTime.now();
     }
     _statusController.add(status);
@@ -229,33 +234,22 @@ class CallSession {
   }
 
   Future<void> switchCamera() async {
+    if (_isDisposed || _mediaSwitchInProgress) return;
+    _mediaSwitchInProgress = true;
+
     final videoTracks = localStream.getVideoTracks();
-    if (videoTracks.isEmpty) return;
-    currentFacingMode = currentFacingMode == 'user' ? 'environment' : 'user';
+    try {
+      if (videoTracks.isEmpty) return;
 
-    final oldTrack = videoTracks.first;
-    final newStream = await navigator.mediaDevices.getUserMedia({
-      'audio': false,
-      'video': {'facingMode': currentFacingMode},
-    });
-    final newTrack = newStream.getVideoTracks().first;
-
-    localStream.removeTrack(oldTrack);
-    localStream.addTrack(newTrack);
-
-    final senders = await peerConnection.getSenders();
-    RTCRtpSender? sender;
-    for (final item in senders) {
-      if (item.track?.kind == 'video') {
-        sender = item;
-        break;
-      }
+      final track = videoTracks.first;
+      await Helper.switchCamera(track);
+      currentFacingMode = currentFacingMode == 'user'
+          ? 'environment'
+          : 'user';
+      _videoTrack = track;
+    } finally {
+      _mediaSwitchInProgress = false;
     }
-
-    if (sender != null) {
-      await sender.replaceTrack(newTrack);
-    }
-    oldTrack.stop();
   }
 
   Future<void> dispose() async {
@@ -304,6 +298,45 @@ class CallService {
   _incomingCallSubscription;
   CallSession? activeSession;
   bool _isDisposed = false;
+
+  Future<User> _requireCurrentUser(String suppliedUserId) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) throw StateError('User must be authenticated.');
+    final requestedId = suppliedUserId.trim();
+    if (requestedId.isNotEmpty && requestedId != user.uid) {
+      throw StateError('Authenticated user does not match call participant.');
+    }
+    return user;
+  }
+
+  Future<void> _writeCandidate(
+    String callId,
+    String collectionPath,
+    RTCIceCandidate candidate,
+  ) async {
+    try {
+      await _firestore
+          .collection('calls')
+          .doc(callId)
+          .collection(collectionPath)
+          .add(_candidateToMap(candidate));
+    } catch (error) {
+      debugPrint('Failed to write ICE candidate: $error');
+    }
+  }
+
+  Future<void> _endSessionAfterFailure(CallSession session) async {
+    if (session.isEnding) return;
+    session.isEnding = true;
+    try {
+      await updateCallStatus(callId: session.callId, status: 'failed');
+    } catch (error) {
+      debugPrint('Failed to mark call as failed: $error');
+    } finally {
+      if (activeSession == session) activeSession = null;
+      await session.dispose();
+    }
+  }
 
   Future<void> _ensurePermissions({required bool video}) async {
     final microphoneStatus = await Permission.microphone.request();
@@ -373,19 +406,20 @@ class CallService {
 
     session.attachStreamListener();
     peerConnection.onIceConnectionState = (RTCIceConnectionState state) async {
-      if (session.isConnected) return;
+      if (session.isConnected || session.isEnding) return;
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
           state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
         session.isConnected = true;
         await updateCallStatus(callId: session.callId, status: 'connected');
         if (session.isCaller) {
-          await _createCallHistoryMessage(
+          await _upsertCallRecord(
             session: session,
-            text: session.type == 'video'
-                ? 'بدء مكالمة فيديو'
-                : 'بدء مكالمة صوتية',
+            status: 'connected',
           );
         }
+      } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+          state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
+        await _endSessionAfterFailure(session);
       }
     };
 
@@ -401,68 +435,94 @@ class CallService {
     required String receiverName,
     required String type,
   }) async {
+    final currentUser = await _requireCurrentUser(callerId);
+    final safeChatId = chatId.trim();
+    final safeReceiverId = receiverId.trim();
+    final safeType = type.trim().toLowerCase();
+    if (safeChatId.isEmpty || safeReceiverId.isEmpty) {
+      throw ArgumentError('Call participants are invalid.');
+    }
+    if (safeType != 'audio' && safeType != 'video') {
+      throw ArgumentError('Call type is invalid.');
+    }
+    if (activeSession != null) {
+      throw StateError('Another call is already active.');
+    }
+
     final callDocRef = _firestore.collection('calls').doc();
-    final localStream = await _getUserMedia(video: type == 'video');
-    final peerConnection = await _createPeerConnection();
-
-    bool isOnline = false;
+    MediaStream? localStream;
+    RTCPeerConnection? peerConnection;
     try {
-      final userDoc = await _firestore
-          .collection('users')
-          .doc(receiverId)
-          .get();
-      if (userDoc.exists) {
-        isOnline = userDoc.data()?['isOnline'] ?? false;
+      localStream = await _getUserMedia(video: safeType == 'video');
+      peerConnection = await _createPeerConnection();
+
+      bool isOnline = false;
+      try {
+        final userDoc = await _firestore
+            .collection('users')
+            .doc(safeReceiverId)
+            .get();
+        if (userDoc.exists) {
+          isOnline = userDoc.data()?['isOnline'] ?? false;
+        }
+      } catch (_) {}
+
+      final session = await _prepareSession(
+        callId: callDocRef.id,
+        chatId: safeChatId,
+        callerId: currentUser.uid,
+        callerName: callerName,
+        receiverId: safeReceiverId,
+        receiverName: receiverName,
+        type: safeType,
+        isCaller: true,
+        isReceiverOnline: isOnline,
+        localStream: localStream,
+        peerConnection: peerConnection,
+      );
+
+      for (final track in localStream.getTracks()) {
+        await peerConnection.addTrack(track, localStream);
       }
-    } catch (_) {}
 
-    await _prepareSession(
-      callId: callDocRef.id,
-      chatId: chatId,
-      callerId: callerId,
-      callerName: callerName,
-      receiverId: receiverId,
-      receiverName: receiverName,
-      type: type,
-      isCaller: true,
-      isReceiverOnline: isOnline,
-      localStream: localStream,
-      peerConnection: peerConnection,
-    );
+      peerConnection.onIceCandidate = (RTCIceCandidate? candidate) {
+        if (candidate == null) return;
+        unawaited(
+          _writeCandidate(callDocRef.id, 'callerCandidates', candidate),
+        );
+      };
 
-    localStream.getTracks().forEach((track) {
-      peerConnection.addTrack(track, localStream);
-    });
+      final offer = await peerConnection.createOffer();
+      await peerConnection.setLocalDescription(offer);
 
-    peerConnection.onIceCandidate = (RTCIceCandidate? candidate) {
-      if (candidate == null) return;
-      _firestore
-          .collection('calls')
-          .doc(callDocRef.id)
-          .collection('callerCandidates')
-          .add(_candidateToMap(candidate));
-    };
+      await callDocRef.set({
+        'callerId': currentUser.uid,
+        'callerName': callerName,
+        'receiverId': safeReceiverId,
+        'receiverName': receiverName,
+        'chatId': safeChatId,
+        'type': safeType,
+        'status': 'calling',
+        'offer': {'type': offer.type, 'sdp': offer.sdp},
+        'timestamp': FieldValue.serverTimestamp(),
+      });
 
-    final offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
+      _listenToCallUpdates(callDocRef.id);
+      await _listenToRemoteCandidates(callDocRef.id, 'calleeCandidates');
+      await session.scheduleAutoEnd(callDocRef.path);
 
-    await callDocRef.set({
-      'callerId': callerId,
-      'callerName': callerName,
-      'receiverId': receiverId,
-      'receiverName': receiverName,
-      'chatId': chatId,
-      'type': type,
-      'status': 'calling',
-      'offer': {'type': offer.type, 'sdp': offer.sdp},
-      'timestamp': FieldValue.serverTimestamp(),
-    });
-
-    _listenToCallUpdates(callDocRef.id);
-    await _listenToRemoteCandidates(callDocRef.id, 'calleeCandidates');
-    activeSession?.scheduleAutoEnd(callDocRef.path);
-
-    return activeSession!;
+      return session;
+    } catch (_) {
+      if (activeSession?.callId == callDocRef.id) {
+        final session = activeSession;
+        activeSession = null;
+        await session?.dispose();
+      } else {
+        await peerConnection?.close();
+        localStream?.getTracks().forEach((track) => track.stop());
+      }
+      rethrow;
+    }
   }
 
   Future<CallSession> answerCall({
@@ -474,6 +534,19 @@ class CallService {
     required String receiverName,
     required String chatId,
   }) async {
+    final currentUser = await _requireCurrentUser(receiverId);
+    if (currentUser.uid == callerId.trim()) {
+      throw StateError('Caller and receiver must be different users.');
+    }
+    if (callId.trim().isEmpty) throw ArgumentError('Call ID is invalid.');
+    final safeType = type.trim().toLowerCase();
+    if (safeType != 'audio' && safeType != 'video') {
+      throw ArgumentError('Call type is invalid.');
+    }
+    if (activeSession != null) {
+      throw StateError('Another call is already active.');
+    }
+
     final callDocRef = _firestore.collection('calls').doc(callId);
     final callSnapshot = await callDocRef.get();
     final callData = callSnapshot.data();
@@ -481,76 +554,103 @@ class CallService {
       throw StateError('Call data not found');
     }
 
-    final localStream = await _getUserMedia(video: type == 'video');
-    final peerConnection = await _createPeerConnection();
-    await _prepareSession(
-      callId: callId,
-      chatId: chatId,
-      callerId: callerId,
-      callerName: callerName,
-      receiverId: receiverId,
-      receiverName: receiverName,
-      type: type,
-      isCaller: false,
-      isReceiverOnline: true,
-      localStream: localStream,
-      peerConnection: peerConnection,
-    );
+    MediaStream? localStream;
+    RTCPeerConnection? peerConnection;
+    try {
+      localStream = await _getUserMedia(video: safeType == 'video');
+      peerConnection = await _createPeerConnection();
+      final session = await _prepareSession(
+        callId: callId,
+        chatId: chatId,
+        callerId: callerId,
+        callerName: callerName,
+        receiverId: currentUser.uid,
+        receiverName: receiverName,
+        type: safeType,
+        isCaller: false,
+        isReceiverOnline: true,
+        localStream: localStream,
+        peerConnection: peerConnection,
+      );
 
-    localStream.getTracks().forEach((track) {
-      peerConnection.addTrack(track, localStream);
-    });
+      for (final track in localStream.getTracks()) {
+        await peerConnection.addTrack(track, localStream);
+      }
 
-    peerConnection.onIceCandidate = (RTCIceCandidate? candidate) {
-      if (candidate == null) return;
-      _firestore
-          .collection('calls')
-          .doc(callId)
-          .collection('calleeCandidates')
-          .add(_candidateToMap(candidate));
-    };
+      peerConnection.onIceCandidate = (RTCIceCandidate? candidate) {
+        if (candidate == null) return;
+        unawaited(_writeCandidate(callId, 'calleeCandidates', candidate));
+      };
 
-    final offer = callData['offer'] as Map<String, dynamic>?;
-    if (offer == null) {
-      throw StateError('Offer data missing');
+      final offer = callData['offer'] as Map<String, dynamic>?;
+      if (offer == null) {
+        throw StateError('Offer data missing');
+      }
+
+      await activeSession!.setRemoteDescription(
+        RTCSessionDescription(offer['sdp'] as String, offer['type'] as String),
+      );
+
+      final answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+
+      await callDocRef.update({
+        'status': 'accepted',
+        'answer': {'type': answer.type, 'sdp': answer.sdp},
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      _listenToCallUpdates(callId);
+      await _listenToRemoteCandidates(callId, 'callerCandidates');
+      await session.scheduleAutoEnd(callDocRef.path);
+
+      // 🔥 إنهاء شاشة CallKit بمجرد الرد بنجاح
+      await CallKitService.instance.endCall(callId);
+
+      return session;
+    } catch (_) {
+      if (activeSession?.callId == callId) {
+        final session = activeSession;
+        activeSession = null;
+        await session?.dispose();
+      } else {
+        await peerConnection?.close();
+        localStream?.getTracks().forEach((track) => track.stop());
+      }
+      rethrow;
     }
-
-    await activeSession!.setRemoteDescription(
-      RTCSessionDescription(offer['sdp'] as String, offer['type'] as String),
-    );
-
-    final answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-
-    await callDocRef.update({
-      'status': 'accepted',
-      'answer': {'type': answer.type, 'sdp': answer.sdp},
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
-
-    _listenToCallUpdates(callId);
-    await _listenToRemoteCandidates(callId, 'callerCandidates');
-    activeSession?.scheduleAutoEnd(callDocRef.path);
-
-    // 🔥 إنهاء شاشة CallKit بمجرد الرد بنجاح
-    await CallKitService.instance.endCall(callId);
-
-    return activeSession!;
   }
 
   Future<void> rejectCall(String callId) async {
     await updateCallStatus(callId: callId, status: 'rejected');
+    await _finalizeCallWithoutSession(callId, 'rejected');
     await CallKitService.instance.endCall(callId); // تأكيد إنهاء CallKit
   }
 
   Future<void> endCall(String callId) async {
+    final session = activeSession?.callId == callId ? activeSession : null;
+    final terminalStatus = session?.isConnected == true ? 'ended' : 'canceled';
     try {
-      if (activeSession?.callId == callId) {
-        activeSession = null;
+      session?.isEnding = true;
+      await updateCallStatus(callId: callId, status: terminalStatus);
+      if (session != null) {
+        await _finalizeCallRecord(
+          session: session,
+          status: terminalStatus,
+        );
+      } else {
+        await _finalizeCallWithoutSession(callId, terminalStatus);
       }
-      await updateCallStatus(callId: callId, status: 'ended');
-      await CallKitService.instance.endCall(callId); // إنهاء للطرفين
-    } catch (_) {}
+      await CallKitService.instance.endCall(callId);
+    } catch (error) {
+      // Cleanup must still happen if signaling or CallKit fails.
+      debugPrint('Failed to end call signaling: $error');
+    } finally {
+      if (session != null) {
+        if (activeSession == session) activeSession = null;
+        await session.dispose();
+      }
+    }
   }
 
   Future<void> updateCallStatus({
@@ -649,11 +749,23 @@ class CallService {
       if (status == 'rejected' ||
           status == 'ended' ||
           status == 'canceled' ||
-          status == 'missed') {
+          status == 'missed' ||
+          status == 'failed') {
         // إيقاف شاشة CallKit فوراً
         await CallKitService.instance.endCall(callId);
 
         final session = activeSession;
+
+        if (session != null) {
+          try {
+            await _finalizeCallRecord(
+              session: session,
+              status: status ?? 'ended',
+            );
+          } catch (error) {
+            debugPrint('Failed to finalize call record: $error');
+          }
+        }
 
         // إظهار إشعار مكالمة فائتة للمستلم إذا انقضى الوقت أو المتصل قفل
         if (status == 'missed' && session?.isCaller == false) {
@@ -708,25 +820,22 @@ class CallService {
     });
   }
 
-  Future<void> _createCallHistoryMessage({
+  Future<void> _upsertCallRecord({
     required CallSession session,
-    required String text,
-    String status = MessageStatus.sent,
+    required String status,
   }) async {
-    if (session.callMessageCreated ||
-        session.callMessageId?.isNotEmpty == true) {
-      return;
-    }
-
-    final messageId = await ChatService().sendMessage(
+    final messageId = 'call_${session.callId}';
+    final text = _callRecordText(session.type, status);
+    await ChatService().sendMessage(
       roomId: session.chatId,
       senderId: session.callerId,
       senderName: session.callerName,
       receiverId: session.receiverId,
+      messageId: messageId,
       text: text,
-      mediaType: 'call',
+      mediaType: ChatMessageType.call,
       mediaUrl: '',
-      status: status,
+      status: MessageStatus.sent,
     );
 
     session.callMessageId = messageId;
@@ -734,6 +843,90 @@ class CallService {
     await _firestore.collection('calls').doc(session.callId).update({
       'messageId': messageId,
     });
+  }
+
+  String _callRecordText(String type, String status) {
+    final label = type == 'video' ? 'مكالمة فيديو' : 'مكالمة صوتية';
+    switch (status) {
+      case 'missed':
+        return '$label فائتة';
+      case 'rejected':
+        return '$label مرفوضة';
+      case 'canceled':
+        return '$label ملغاة';
+      case 'failed':
+        return '$label فاشلة';
+      case 'ended':
+        return '$label منتهية';
+      default:
+        return '$label صادرة';
+    }
+  }
+
+  Future<void> _finalizeCallRecord({
+    required CallSession session,
+    required String status,
+  }) async {
+    await _upsertCallRecord(session: session, status: status);
+    if (status == 'missed') {
+      await NotificationService().createNotification(
+        senderId: session.callerId,
+        receiverId: session.receiverId,
+        type: 'missed_call',
+        referenceId: session.callId,
+        roomId: session.chatId,
+        notificationKey:
+            'missed_call:${session.callId}:${session.receiverId}',
+      );
+    }
+  }
+
+  Future<void> _finalizeCallWithoutSession(
+    String callId,
+    String status,
+  ) async {
+    final snapshot = await _firestore.collection('calls').doc(callId).get();
+    final data = snapshot.data();
+    if (data == null) return;
+
+    final chatId = (data['chatId'] as String? ?? '').trim();
+    final callerId = (data['callerId'] as String? ?? '').trim();
+    final callerName = (data['callerName'] as String? ?? 'مستخدم').trim();
+    final receiverId = (data['receiverId'] as String? ?? '').trim();
+    final type = (data['type'] as String? ?? 'audio').trim();
+    if (chatId.isEmpty || callerId.isEmpty || receiverId.isEmpty) return;
+
+    await ChatService().sendMessage(
+      roomId: chatId,
+      senderId: callerId,
+      senderName: callerName,
+      receiverId: receiverId,
+      messageId: 'call_$callId',
+      text: _callRecordText(type, status),
+      mediaType: ChatMessageType.call,
+      mediaUrl: '',
+      status: MessageStatus.sent,
+    );
+    await _firestore.collection('calls').doc(callId).update({
+      'messageId': 'call_$callId',
+    });
+    if (status == 'missed') {
+      await NotificationService().createNotification(
+        senderId: callerId,
+        receiverId: receiverId,
+        type: 'missed_call',
+        referenceId: callId,
+        roomId: chatId,
+        notificationKey: 'missed_call:$callId:$receiverId',
+      );
+    }
+  }
+
+  Future<void> finalizeCallWithoutSession({
+    required String callId,
+    required String status,
+  }) async {
+    await _finalizeCallWithoutSession(callId, status);
   }
 
   void _updateStatus(String status) {

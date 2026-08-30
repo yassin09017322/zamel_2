@@ -77,117 +77,200 @@ class _CommentSectionState extends State<CommentSection> {
 
   @override
   Widget build(BuildContext context) {
+    final commentsByParent = <String, List<Comment>>{};
+    final commentIds = widget.comments.map((comment) => comment.id).toSet();
+    for (final comment in widget.comments) {
+      final parentId = comment.replyToCommentId.trim();
+      if (parentId.isNotEmpty) {
+        commentsByParent.putIfAbsent(parentId, () => <Comment>[]).add(comment);
+      }
+    }
+
+    final rootComments = widget.comments.where((comment) {
+      final parentId = comment.replyToCommentId.trim();
+      return parentId.isEmpty || !commentIds.contains(parentId);
+    });
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: widget.comments.map((comment) {
-        final isAudio = comment.type == 'audio' || comment.audioUrl.isNotEmpty || comment.text.startsWith('[AUDIO]');
-        final active = _activeAudioUrl == comment.audioUrl;
-        final duration = Duration(seconds: comment.duration > 0 ? comment.duration : 30);
+      children: rootComments
+          .map((comment) => _buildCommentTree(comment, commentsByParent, <String>{}))
+          .toList(),
+    );
+  }
 
-        return Card(
-          margin: const EdgeInsets.symmetric(vertical: 6),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    GestureDetector(
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => ProfileScreen(userId: comment.userId))),
-                      child: Text(comment.username, style: const TextStyle(fontWeight: FontWeight.bold)),
+  Widget _buildCommentTree(
+    Comment comment,
+    Map<String, List<Comment>> commentsByParent,
+    Set<String> ancestorIds,
+  ) {
+    final nextAncestorIds = <String>{...ancestorIds, comment.id};
+    final replies = (commentsByParent[comment.id] ?? const <Comment>[])
+        .where((reply) => !nextAncestorIds.contains(reply.id));
+    final isAudio = comment.type == 'audio' ||
+        comment.audioUrl.isNotEmpty ||
+        comment.text.startsWith('[AUDIO]');
+    final active = _activeAudioUrl == comment.audioUrl;
+    final duration = Duration(seconds: comment.duration > 0 ? comment.duration : 30);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Card(
+            margin: EdgeInsets.zero,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      GestureDetector(
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => ProfileScreen(userId: comment.userId),
+                          ),
+                        ),
+                        child: Text(
+                          comment.username,
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        _formatTime(comment.timestamp),
+                        style: const TextStyle(color: Colors.grey, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                  if (comment.replyToUsername.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Text(
+                        'رد على ${comment.replyToUsername}',
+                        style: const TextStyle(color: Colors.grey, fontSize: 13),
+                      ),
                     ),
-                    const Spacer(),
-                    Text(_formatTime(comment.timestamp), style: const TextStyle(color: Colors.grey, fontSize: 12)),
                   ],
-                ),
-                if (comment.replyToUsername.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(14),
+                  const SizedBox(height: 10),
+                  if (isAudio)
+                    InkWell(
+                      onTap: () async {
+                        try {
+                          await _toggleAudioPlayback(comment);
+                        } catch (_) {
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('تعذر تشغيل الصوت')),
+                            );
+                          }
+                        }
+                      },
+                      borderRadius: BorderRadius.circular(18),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF5B6CFF).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  active && _isAudioPlaying
+                                      ? Icons.pause_circle_filled
+                                      : Icons.play_circle_fill,
+                                  color: const Color(0xFF5B6CFF),
+                                  size: 28,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    comment.text.isNotEmpty &&
+                                            !comment.text.startsWith('[AUDIO]')
+                                        ? comment.text
+                                        : 'تعليق صوتي',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF0F1A3A),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            LinearProgressIndicator(
+                              value: active
+                                  ? (_audioPosition.inMilliseconds /
+                                          duration.inMilliseconds)
+                                      .clamp(0.0, 1.0)
+                                  : 0.0,
+                              backgroundColor: Colors.white,
+                              valueColor: const AlwaysStoppedAnimation<Color>(
+                                Color(0xFF5B6CFF),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              active
+                                  ? '${_formatDuration(_audioPosition)} / ${_formatDuration(duration)}'
+                                  : '0:00 / ${_formatDuration(duration)}',
+                              style: const TextStyle(
+                                color: Color(0xFF5B6CFF),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    Text(
+                      comment.text,
+                      style: const TextStyle(color: Colors.black87, height: 1.4),
                     ),
-                    child: Text('رد على ${comment.replyToUsername}', style: const TextStyle(color: Colors.grey, fontSize: 13)),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: () => widget.onReply?.call(comment),
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFF5B6CFF),
+                        ),
+                        child: const Text('رد'),
+                      ),
+                    ],
                   ),
                 ],
-                const SizedBox(height: 10),
-                if (isAudio)
-                  InkWell(
-                    onTap: () async {
-                      try {
-                        await _toggleAudioPlayback(comment);
-                      } catch (_) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر تشغيل الصوت')));
-                        }
-                      }
-                    },
-                    borderRadius: BorderRadius.circular(18),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF5B6CFF).withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                active && _isAudioPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill,
-                                color: const Color(0xFF5B6CFF),
-                                size: 28,
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  comment.text.isNotEmpty && !comment.text.startsWith('[AUDIO]') ? comment.text : 'تعليق صوتي',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0F1A3A)),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          LinearProgressIndicator(
-                            value: active ? (_audioPosition.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0) : 0.0,
-                            backgroundColor: Colors.white,
-                            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF5B6CFF)),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            active ? '${_formatDuration(_audioPosition)} / ${_formatDuration(duration)}' : '0:00 / ${_formatDuration(duration)}',
-                            style: const TextStyle(color: Color(0xFF5B6CFF), fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                else
-                  Text(comment.text, style: const TextStyle(color: Colors.black87, height: 1.4)),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    TextButton(
-                      onPressed: () {
-                        widget.onReply?.call(comment);
-                      },
-                      style: TextButton.styleFrom(
-                        foregroundColor: const Color(0xFF5B6CFF),
-                      ),
-                      child: const Text('رد'),
-                    ),
-                  ],
-                ),
-              ],
+              ),
             ),
           ),
-        );
-      }).toList(),
+          if (replies.isNotEmpty)
+            Padding(
+              padding: const EdgeInsetsDirectional.only(start: 20),
+              child: Column(
+                children: replies
+                    .map((reply) => _buildCommentTree(
+                          reply,
+                          commentsByParent,
+                          nextAncestorIds,
+                        ))
+                    .toList(),
+              ),
+            ),
+        ],
+      ),
     );
   }
 

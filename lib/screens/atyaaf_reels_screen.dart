@@ -857,6 +857,7 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     AtyaafVideo video,
   ) async {
     final commentController = TextEditingController();
+    bool isSendingComment = false;
     try {
       await showModalBottomSheet(
         context: context,
@@ -898,23 +899,70 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                       ),
                       const Divider(),
                       Expanded(
-                        child: Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.chat_bubble_outline,
-                                size: 50,
-                                color: Colors.grey[400],
+                        child: StreamBuilder<List<Map<String, dynamic>>>(
+                          stream: _service.commentsStream(video.id),
+                          builder: (context, snapshot) {
+                            if (snapshot.connectionState ==
+                                ConnectionState.waiting) {
+                              return const Center(
+                                child: CircularProgressIndicator(),
+                              );
+                            }
+                            if (snapshot.hasError) {
+                              return Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Text(
+                                    'تعذر تحميل التعليقات\n${snapshot.error}',
+                                    textAlign: TextAlign.center,
+                                    style: const TextStyle(color: Colors.red),
+                                  ),
+                                ),
+                              );
+                            }
+
+                            final comments = snapshot.data ?? const [];
+                            if (comments.isEmpty) {
+                              return Center(
+                                child: Text(
+                                  'كن أول من يترك تعليقاً!',
+                                  style: TextStyle(color: Colors.grey[600]),
+                                ),
+                              );
+                            }
+
+                            return ListView.builder(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
                               ),
-                              const SizedBox(height: 10),
-                              Text(
-                                'كن أول من يترك تعليقاً!',
-                                style: TextStyle(color: Colors.grey[600]),
-                              ),
-                            ],
-                          ),
+                              itemCount: comments.length,
+                              itemBuilder: (context, index) {
+                                final comment = comments[index];
+                                final username =
+                                    comment['username']?.toString().trim() ?? '';
+                                return ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(
+                                    vertical: 4,
+                                  ),
+                                  leading: CircleAvatar(
+                                    child: Text(
+                                      username.isEmpty ? 'م' : username.substring(0, 1),
+                                    ),
+                                  ),
+                                  title: Text(
+                                    comment['username']?.toString() ?? 'مستخدم',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    comment['text']?.toString() ?? '',
+                                  ),
+                                );
+                              },
+                            );
+                          },
                         ),
                       ),
                       Container(
@@ -959,23 +1007,42 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                             ),
                             const SizedBox(width: 8),
                             GestureDetector(
-                              onTap: () {
-                                if (isTyping) {
+                              onTap: () async {
+                                if (!isTyping || isSendingComment) return;
+                                final text = commentController.text.trim();
+                                if (text.isEmpty) return;
+
+                                setModalState(() => isSendingComment = true);
+                                try {
+                                  final currentUser = context
+                                      .read<AuthProvider>()
+                                      .currentUser;
+                                  if (currentUser == null) {
+                                    throw Exception(
+                                      'يجب تسجيل الدخول لإرسال تعليق',
+                                    );
+                                  }
+                                  await _service.addComment(
+                                    reelId: video.id,
+                                    text: text,
+                                    username: currentUser.username,
+                                  );
                                   commentController.clear();
                                   setModalState(() => isTyping = false);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('تم إرسال التعليق'),
-                                    ),
-                                  );
-                                } else {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                        'اضغط مطولاً لتسجيل رسالة صوتية 🎤',
+                                } catch (error) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text('فشل إرسال التعليق: $error'),
                                       ),
-                                    ),
-                                  );
+                                    );
+                                  }
+                                } finally {
+                                  if (context.mounted) {
+                                    setModalState(
+                                      () => isSendingComment = false,
+                                    );
+                                  }
                                 }
                               },
                               child: AnimatedContainer(
@@ -987,7 +1054,16 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                                       : const Color(0xFF2EC7A5),
                                   shape: BoxShape.circle,
                                 ),
-                                child: Icon(
+                                  child: isSendingComment
+                                      ? const SizedBox(
+                                          width: 22,
+                                          height: 22,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
+                                        )
+                                      : Icon(
                                   isTyping ? Icons.send_rounded : Icons.mic,
                                   color: Colors.white,
                                   size: 22,
@@ -1007,6 +1083,8 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
       );
     } catch (e) {
       debugPrint("Error showing comments: $e");
+    } finally {
+      commentController.dispose();
     }
   }
 

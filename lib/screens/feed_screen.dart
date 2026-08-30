@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
-import '../models/post.dart';
 import '../models/story.dart';
 import '../providers/auth_provider.dart';
 import '../providers/feed_provider.dart';
@@ -30,11 +29,43 @@ class FeedScreen extends StatefulWidget {
 class _FeedScreenState extends State<FeedScreen> {
   final StoryService _storyService = StoryService();
   final ImagePicker _picker = ImagePicker();
+  final ScrollController _feedScrollController = ScrollController();
   final Set<String> _hiddenStoryUsers = <String>{};
+  String? _feedKey;
+
+  @override
+  void initState() {
+    super.initState();
+    _feedScrollController.addListener(_handleFeedScroll);
+  }
+
+  @override
+  void dispose() {
+    _feedScrollController.dispose();
+    super.dispose();
+  }
+
+  void _handleFeedScroll() {
+    if (!_feedScrollController.hasClients) return;
+    final position = _feedScrollController.position;
+    if (position.pixels >= position.maxScrollExtent - 500) {
+      final feedProvider = context.read<FeedProvider>();
+      final authProvider = context.read<AuthProvider>();
+      unawaited(
+        feedProvider.loadNextPage(
+          currentUser: authProvider.currentUser,
+        ),
+      );
+    }
+  }
 
   Future<void> _handleRefresh() async {
-    setState(() {});
-    await Future.delayed(const Duration(seconds: 1));
+    final feedProvider = context.read<FeedProvider>();
+    final authProvider = context.read<AuthProvider>();
+    await feedProvider.refresh(
+      categoryId: context.read<SettingsProvider>().feedMode,
+      currentUser: authProvider.currentUser,
+    );
   }
 
   Future<void> _showStoryUploadSheet(BuildContext context) async {
@@ -705,6 +736,16 @@ class _FeedScreenState extends State<FeedScreen> {
     final authProvider = context.watch<AuthProvider>();
     final settingsProvider = context.watch<SettingsProvider>();
     final selectedMode = settingsProvider.feedMode;
+    final feedKey = '${selectedMode}:${authProvider.currentUser?.id ?? ''}';
+    if (_feedKey != feedKey) {
+      _feedKey = feedKey;
+      unawaited(
+        feedProvider.loadFirstPage(
+          categoryId: selectedMode,
+          currentUser: authProvider.currentUser,
+        ),
+      );
+    }
 
     final isArabic = context.locale.languageCode == 'ar';
 
@@ -715,6 +756,7 @@ class _FeedScreenState extends State<FeedScreen> {
         color: const Color(0xFFE94057),
         backgroundColor: Colors.white,
         child: SingleChildScrollView(
+          controller: _feedScrollController,
           physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics(),
           ),
@@ -782,13 +824,9 @@ class _FeedScreenState extends State<FeedScreen> {
               const SizedBox(height: 16),
               Divider(color: Colors.grey[200], thickness: 6),
               const SizedBox(height: 8),
-              StreamBuilder<List<Post>>(
-                stream: feedProvider.postsStream(
-                  categoryId: selectedMode,
-                  currentUser: authProvider.currentUser,
-                ),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
+              Builder(
+                builder: (context) {
+                  if (feedProvider.isLoading && feedProvider.posts.isEmpty) {
                     return const Padding(
                       padding: EdgeInsets.all(40.0),
                       child: Center(
@@ -798,19 +836,20 @@ class _FeedScreenState extends State<FeedScreen> {
                       ),
                     );
                   }
-                  if (snapshot.hasError) {
+                  if (feedProvider.errorMessage != null &&
+                      feedProvider.posts.isEmpty) {
                     return Padding(
                       padding: const EdgeInsets.all(20.0),
                       child: Center(
                         child: Text(
-                          'حدث خطأ\n${snapshot.error}',
+                          'حدث خطأ\n${feedProvider.errorMessage}',
                           textAlign: TextAlign.center,
                         ),
                       ),
                     );
                   }
 
-                  final posts = snapshot.data ?? [];
+                  final posts = feedProvider.posts;
 
                   if (posts.isEmpty) {
                     return const Padding(
@@ -834,7 +873,9 @@ class _FeedScreenState extends State<FeedScreen> {
                     );
                   }
 
-                  return ListView.separated(
+                  return Column(
+                    children: [
+                      ListView.separated(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     padding: EdgeInsets.zero,
@@ -846,6 +887,21 @@ class _FeedScreenState extends State<FeedScreen> {
                     ),
                     itemBuilder: (context, index) =>
                         PostCard(post: posts[index]),
+                      ),
+                      if (feedProvider.isLoadingMore)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: CircularProgressIndicator(),
+                        ),
+                      if (feedProvider.errorMessage != null)
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text(
+                            'تعذر تحميل المزيد\n${feedProvider.errorMessage}',
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                    ],
                   );
                 },
               ),

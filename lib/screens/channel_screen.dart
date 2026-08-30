@@ -2078,7 +2078,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
   }
 
   Future<void> _publishTextMessage(dynamic currentUser) async {
-    if (currentUser == null) return;
+    if (currentUser == null || _isPublishing) return;
     final text = _textController.text.trim();
     if (text.isEmpty) return;
 
@@ -2117,11 +2117,11 @@ class _ChannelScreenState extends State<ChannelScreen> {
             '${widget.channelId}_${DateTime.now().microsecondsSinceEpoch}',
       );
       _textController.clear();
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('فشل نشر المنشور')));
+      ).showSnackBar(SnackBar(content: Text('فشل نشر المنشور: $error')));
     } finally {
       if (mounted) setState(() => _isPublishing = false);
     }
@@ -2133,6 +2133,8 @@ class _ChannelScreenState extends State<ChannelScreen> {
     String currentUserId, {
     bool isVideo = false,
   }) async {
+    if (_isPublishing) return;
+
     final channel = await _channelService.getChannel(widget.channelId);
     if (channel == null) {
       if (mounted) {
@@ -2172,7 +2174,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
       String uploadedUrl = '';
       String finalMediaType = isVideo ? 'video' : 'image';
 
-      if (kIsWeb && file.bytes != null) {
+      if (file.bytes != null) {
         // ✅ رفع الويب مع دعم Progress واكتشاف النوع التلقائي
         final uploadResult = await _mediaService
             .uploadBytesWithResultAndProgress(
@@ -2191,7 +2193,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
           throw Exception(uploadResult.error ?? 'فشل الرفع');
         }
         uploadedUrl = uploadResult.url!;
-        finalMediaType = uploadResult.detectedFileType ?? finalMediaType;
+        finalMediaType = isVideo ? 'video' : 'image';
       } else if (file.path != null) {
         // ✅ رفع الموبايل باستخدام XFile مع مؤشر الرفع والاستفادة من ذكاء الخدمة
         final localXFile = XFile(file.path!);
@@ -2210,9 +2212,16 @@ class _ChannelScreenState extends State<ChannelScreen> {
           throw Exception(uploadResult.error ?? 'فشل الرفع عبر المحرك');
         }
         uploadedUrl = uploadResult.url!;
-        finalMediaType = uploadResult.detectedFileType ?? finalMediaType;
+        finalMediaType = isVideo ? 'video' : 'image';
       } else {
         throw Exception('لا يوجد مسار للملف');
+      }
+
+      final uploadedUri = Uri.tryParse(uploadedUrl.trim());
+      if (uploadedUri == null ||
+          uploadedUri.scheme != 'https' ||
+          uploadedUri.host.isEmpty) {
+        throw Exception('استجابة الرفع لا تحتوي رابطًا صالحًا');
       }
 
       // ✅ النشر النهائي في القناة

@@ -81,9 +81,15 @@ class CommentService {
     String? clientRequestId,
   }) async {
     final currentUser = _auth.currentUser;
-    final effectiveUserId = userId.trim().isNotEmpty
-        ? userId.trim()
-        : (currentUser?.uid ?? '');
+    final authenticatedUserId = currentUser?.uid ?? '';
+    final requestedUserId = userId.trim();
+    if (authenticatedUserId.isEmpty) {
+      throw Exception('يجب تسجيل الدخول لإرسال تعليق');
+    }
+    if (requestedUserId.isNotEmpty && requestedUserId != authenticatedUserId) {
+      throw Exception('هوية صاحب التعليق غير صالحة');
+    }
+    final effectiveUserId = authenticatedUserId;
     final effectiveUsername = username.trim().isNotEmpty
         ? username.trim()
         : (currentUser?.displayName ?? currentUser?.email ?? 'مستخدم');
@@ -111,6 +117,7 @@ class CommentService {
     }
 
     final postReference = _firestore.collection('posts').doc(postId.trim());
+    final parentCommentId = (replyToCommentId ?? '').trim();
     final commentReference =
         clientRequestId == null || clientRequestId.trim().isEmpty
         ? postReference.collection('comments').doc()
@@ -122,6 +129,15 @@ class CommentService {
             final postSnapshot = await transaction.get(postReference);
             if (!postSnapshot.exists) {
               throw Exception('المنشور غير موجود');
+            }
+
+            if (parentCommentId.isNotEmpty) {
+              final parentSnapshot = await transaction.get(
+                postReference.collection('comments').doc(parentCommentId),
+              );
+              if (!parentSnapshot.exists) {
+                throw Exception('التعليق الأب غير موجود');
+              }
             }
 
             final existingComment = await transaction.get(commentReference);
@@ -151,9 +167,6 @@ class CommentService {
                 replyToUsername: replyToUsername,
               ),
             );
-            transaction.update(postReference, {
-              'commentsCount': FieldValue.increment(1),
-            });
           })
           .timeout(_writeTimeout);
     } on FirebaseException catch (error, stackTrace) {

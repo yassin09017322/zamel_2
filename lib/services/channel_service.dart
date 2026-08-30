@@ -894,7 +894,17 @@ class ChannelService {
       throw Exception('المستخدم غير مسجل دخول');
     }
 
-    final resolvedSenderId = senderId.trim().isNotEmpty ? senderId.trim() : currentUser.uid;
+    final safeChannelId = channelId.trim();
+    if (safeChannelId.isEmpty) {
+      throw Exception('معرف القناة غير صالح');
+    }
+
+    final requestedSenderId = senderId.trim();
+    if (requestedSenderId.isNotEmpty && requestedSenderId != currentUser.uid) {
+      throw Exception('هوية المرسل غير صالحة');
+    }
+
+    final resolvedSenderId = currentUser.uid;
     final resolvedSenderName = senderName.trim().isNotEmpty
         ? senderName.trim()
         : (currentUser.email ?? 'مستخدم');
@@ -905,7 +915,7 @@ class ChannelService {
       mediaType: mediaType,
     );
 
-    final channelDoc = await _firestore.collection('channels').doc(channelId).get();
+    final channelDoc = await _firestore.collection('channels').doc(safeChannelId).get();
     if (!channelDoc.exists) {
       throw Exception('القناة غير موجودة');
     }
@@ -920,17 +930,17 @@ class ChannelService {
         clientRequestId == null || clientRequestId.trim().isEmpty
         ? _firestore
               .collection('channels')
-              .doc(channelId)
+                .doc(safeChannelId)
               .collection('messages')
               .doc()
         : _firestore
               .collection('channels')
-              .doc(channelId)
+                .doc(safeChannelId)
               .collection('messages')
               .doc(clientRequestId.trim());
 
     final payload = buildMessagePayload(
-      channelId: channelId,
+      channelId: safeChannelId,
       senderId: resolvedSenderId,
       senderName: resolvedSenderName,
       text: text,
@@ -944,12 +954,6 @@ class ChannelService {
     );
 
     await messageReference.set(payload).timeout(_messageWriteTimeout);
-
-    await _firestore
-        .collection('channels')
-        .doc(channelId)
-        .update({'updatedAt': FieldValue.serverTimestamp()})
-        .timeout(_messageWriteTimeout);
 
     try {
       final receiverIds = <String>{

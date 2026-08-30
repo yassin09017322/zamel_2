@@ -65,6 +65,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
   int _loadGeneration = 0;
   String? _localMediaPath;
   bool _isMediaLoading = false;
+  String? _mediaLoadError;
   List<Map<String, dynamic>>? _liveViewers;
   List<Map<String, dynamic>>? _liveReactions;
 
@@ -154,6 +155,7 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       if (mounted) _goToNextStory();
     });
     _localMediaPath = null;
+    _mediaLoadError = null;
     _isMediaLoading = story.mediaType != 'text';
     if (mounted) setState(() {});
 
@@ -173,9 +175,9 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
       _videoController?.dispose();
       _videoController = localMediaPath != null
           ? VideoPlayerController.file(io.File(localMediaPath)) // 🔥 التعديل الجذري الأول هنا (io.File)
-          : kIsWeb
-          ? VideoPlayerController.networkUrl(Uri.parse(_buildStoryVideoUrl(story.imageUrl))) // تحديث الدالة القديمة
-          : null;
+          : VideoPlayerController.networkUrl(
+              Uri.parse(_buildStoryVideoUrl(story.imageUrl)),
+            );
       if (_videoController != null) {
         try {
           await _videoController!.initialize();
@@ -190,9 +192,8 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
           if (mounted) {
             setState(() => _isVideoInitialized = false);
           }
+          _mediaLoadError = error.toString();
         }
-      } else if (mounted) {
-        setState(() => _isVideoInitialized = false);
       }
     } else {
       _videoController?.dispose();
@@ -433,12 +434,12 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                                   color: Colors.white,
                                 ),
                               )
-                            : !kIsWeb && index == _currentIndex
-                            ? _buildMissingMediaPlaceholder()
                             : Image.network(
                                 item.imageUrl,
                                 fit: BoxFit.cover,
                                 width: double.infinity,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    _buildMissingMediaPlaceholder(error),
                               ),
                       ),
                       Positioned(
@@ -1145,7 +1146,10 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
 
   Widget _buildVideoPlayer() {
     if (_videoController == null && !_isMediaLoading) {
-      return _buildMissingMediaPlaceholder();
+      return _buildMissingMediaPlaceholder(_mediaLoadError);
+    }
+    if (_mediaLoadError != null && !_isVideoInitialized) {
+      return _buildMissingMediaPlaceholder(_mediaLoadError);
     }
     if (!_isVideoInitialized || _videoController == null) {
       return const Center(
@@ -1178,11 +1182,13 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     );
   }
 
-  Widget _buildMissingMediaPlaceholder() {
-    return const Center(
+  Widget _buildMissingMediaPlaceholder([Object? error]) {
+    return Center(
       child: Text(
-        'تعذر تحميل الوسائط محليًا',
-        style: TextStyle(color: Colors.white),
+        error == null
+            ? 'تعذر تحميل الوسائط'
+            : 'تعذر تحميل الوسائط: $error',
+        style: const TextStyle(color: Colors.white),
       ),
     );
   }
