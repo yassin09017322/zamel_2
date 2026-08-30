@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../l10n/app_localizations.dart';
+import '../providers/atyaaf_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/engagement_provider.dart';
 
@@ -16,7 +17,6 @@ class FeatureIdeasScreen extends StatefulWidget {
 class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
   // حالات الميزات التجريبية المحلية
   bool _focusModeEnabled = false;
-  bool _cinemaModeEnabled = true;
 
   // دالة التعامل مع التصويت في الفايربيس
   Future<void> _toggleVote(String docId, List<dynamic> votedUsers, String currentUserId) async {
@@ -41,6 +41,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
   @override
   Widget build(BuildContext context) {
     final engagement = context.watch<EngagementProvider>();
+    final atyaafProvider = context.watch<AtyaafProvider>();
     final currentUser = context.watch<AuthProvider>().currentUser;
     final double progress = (engagement.points / 500.0).clamp(0.0, 1.0);
     final l10n = AppLocalizations.of(context);
@@ -123,29 +124,54 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                       decoration: BoxDecoration(color: const Color(0xFF5B6CFF).withValues(alpha: 0.1), shape: BoxShape.circle),
                       child: const Icon(Icons.theaters_rounded, color: Color(0xFF5B6CFF)),
                     ),
-                    value: _cinemaModeEnabled,
-                    onChanged: (val) => setState(() => _cinemaModeEnabled = val),
+                    value: atyaafProvider.cinematicModeEnabled,
+                    onChanged: (val) => atyaafProvider.setCinematicMode(val),
                   ),
                 ],
               ),
             ),
+            if (_focusModeEnabled)
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEAF0FF),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFF5B6CFF).withValues(alpha: 0.2)),
+                ),
+                child: Row(
+                  children: const [
+                    Icon(Icons.center_focus_strong_rounded, color: Color(0xFF5B6CFF)),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'وضع التركيز مفعل: تم تقييد الإلهاءات وتخفيف المحتوى غير الضروري.',
+                        style: TextStyle(color: Color(0xFF5B6CFF), fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             const SizedBox(height: 32),
 
             // 2. قسم مكافآت التفاعل
             Text(l10n.featureIdeasRewards, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF2EC7A5), Color(0xFF1DA1F2)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
+            AnimatedOpacity(
+              opacity: _focusModeEnabled ? 0.55 : 1.0,
+              duration: const Duration(milliseconds: 250),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF2EC7A5), Color(0xFF1DA1F2)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [BoxShadow(color: const Color(0xFF1DA1F2).withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))],
                 ),
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [BoxShadow(color: const Color(0xFF1DA1F2).withValues(alpha: 0.3), blurRadius: 10, offset: const Offset(0, 4))],
-              ),
-              child: Column(
+                child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
@@ -201,6 +227,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                 ],
               ),
             ),
+            ),
             const SizedBox(height: 32),
 
             // 3. قسم التصويت التفاعلي المربوط بـ Firestore
@@ -249,7 +276,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                           child: Text('$votes مستخدم يطالبون بهذه الميزة', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
                         ),
                         trailing: InkWell(
-                          onTap: !isLoggedIn || currentUserId == null
+                          onTap: (!isLoggedIn || currentUserId == null || _focusModeEnabled)
                               ? null
                               : () => _toggleVote(doc.id, votedUsers, currentUserId),
                           borderRadius: BorderRadius.circular(20),

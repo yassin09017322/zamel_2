@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../models/notification_item.dart';
 import '../providers/auth_provider.dart';
+import '../screens/channel_screen.dart';
 import '../screens/chat_room_screen.dart';
 import '../screens/post_detail_screen.dart';
 import '../screens/user_profile_screen.dart';
@@ -73,6 +74,11 @@ class NotificationsScreen extends StatelessWidget {
                   // التوجيه لتفاصيل المنشور (إعجاب أو تعليق)
                   if (item.referenceId.isNotEmpty && (item.type == 'comment' || item.type == 'like' || item.type == 'post_update')) {
                     Navigator.of(context).push(MaterialPageRoute(builder: (_) => PostDetailScreen(postId: item.referenceId)));
+                    return;
+                  }
+
+                  if (item.type == 'channel_post' && item.channelId.isNotEmpty) {
+                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => ChannelScreen(channelId: item.channelId)));
                     return;
                   }
 

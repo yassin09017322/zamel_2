@@ -150,6 +150,16 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                               child: CircularProgressIndicator(),
                             );
                           }
+                          if (commentsSnapshot.hasError) {
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 20),
+                              child: Text(
+                                'تعذر تحميل التعليقات\n${commentsSnapshot.error}',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(color: Colors.red),
+                              ),
+                            );
+                          }
                           final comments = commentsSnapshot.data ?? [];
                           if (comments.isEmpty) {
                             return const Padding(
@@ -435,11 +445,11 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                               _replyToUserId = null;
                               _replyToUsername = null;
                             });
-                          } catch (_) {
+                          } catch (error) {
                             if (mounted)
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('فشل إرسال الصوت'),
+                                SnackBar(
+                                  content: Text('فشل إرسال الصوت: $error'),
                                 ),
                               );
                           } finally {
@@ -472,10 +482,12 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                           _replyToUserId = null;
                           _replyToUsername = null;
                         });
-                      } catch (_) {
+                      } catch (error) {
                         if (mounted)
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('فشل إرسال التعليق')),
+                            SnackBar(
+                              content: Text('فشل إرسال التعليق: $error'),
+                            ),
                           );
                       } finally {
                         if (mounted) setState(() => _isSendingComment = false);

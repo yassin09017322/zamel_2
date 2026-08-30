@@ -33,12 +33,14 @@ class Comment {
 
   factory Comment.fromFirestore(DocumentSnapshot<Map<String, dynamic>> snapshot) {
     final data = snapshot.data() ?? <String, dynamic>{};
-    final timestampValue = data['timestamp'];
+    final timestampValue = data['createdAt'] ?? data['timestamp'];
     DateTime date;
     if (timestampValue is Timestamp) {
       date = timestampValue.toDate();
     } else if (timestampValue is DateTime) {
       date = timestampValue;
+    } else if (timestampValue is String) {
+      date = DateTime.tryParse(timestampValue) ?? DateTime.now();
     } else {
       date = DateTime.now();
     }

@@ -3,12 +3,53 @@ import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/channel.dart';
 import '../models/channel_message.dart';
+import 'notification_service.dart';
 
 class ChannelService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   static final FirebaseAuth _auth = FirebaseAuth.instance;
   static const Duration _messageWriteTimeout = Duration(seconds: 30);
   static const Duration _channelImageWriteTimeout = Duration(seconds: 30);
+
+  static Map<String, dynamic> buildMessagePayload({
+    required String channelId,
+    required String senderId,
+    required String senderName,
+    required String text,
+    String mediaUrl = '',
+    String mediaType = 'text',
+    String thumbnailUrl = '',
+    String parentMessageId = '',
+    Map<String, dynamic>? reactions,
+    int replyCount = 0,
+    Map<String, dynamic>? extraData,
+  }) {
+    final resolvedSenderId = senderId.trim();
+    final resolvedSenderName = senderName.trim().isNotEmpty
+        ? senderName.trim()
+        : 'مستخدم';
+    final resolvedMediaType = mediaType.trim().isEmpty ? 'text' : mediaType.trim();
+
+    return {
+      'channelId': channelId,
+      'senderId': resolvedSenderId,
+      'senderName': resolvedSenderName,
+      'text': text.trim(),
+      'mediaUrl': mediaUrl.trim(),
+      'mediaType': resolvedMediaType,
+      'thumbnailUrl': thumbnailUrl.trim(),
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+      'timestamp': FieldValue.serverTimestamp(),
+      'isDeleted': false,
+      'parentMessageId': parentMessageId,
+      'reactions': reactions ?? const {},
+      'replyCount': replyCount,
+      'viewCount': 0,
+      'viewedBy': const <String>[],
+      'extraData': extraData ?? const {},
+    };
+  }
 
   Future<void> _ensureAdmin() async {
     final currentUser = _auth.currentUser;
@@ -200,57 +241,273 @@ class ChannelService {
     }).timeout(_channelImageWriteTimeout);
   }
 
+  static bool isUserInMemberList(List<dynamic>? values, String userId) {
+    final safeUserId = userId.trim();
+    if (safeUserId.isEmpty) return false;
+    for (final value in values ?? const <dynamic>[]) {
+      if (value is String && value.trim() == safeUserId) return true;
+    }
+    return false;
+  }
+
+  static bool userExistsInList(List<dynamic>? values, String userId) {
+    final safeUserId = userId.trim();
+    if (safeUserId.isEmpty) return false;
+    for (final value in values ?? const <dynamic>[]) {
+      if (value is String && value.trim() == safeUserId) return true;
+    }
+    return false;
+  }
+
   Future<void> addMember({
     required String channelId,
     required String userId,
   }) async {
-    if (userId.trim().isEmpty) return;
+    final safeUserId = userId.trim();
+    if (safeUserId.isEmpty) return;
     final ref = _firestore.collection('channels').doc(channelId);
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(ref);
       if (!snapshot.exists) return;
       final data = snapshot.data() ?? {};
-      final members = List<String>.from(data['memberIds'] ?? []);
-      final guests = List<String>.from(data['guestIds'] ?? []);
-      final moderators = List<String>.from(data['moderators'] ?? []);
-      if (!members.contains(userId)) members.add(userId);
-      if (guests.contains(userId)) guests.remove(userId);
-      if (!moderators.contains(userId)) {
-        transaction.update(ref, {
-          'memberIds': members,
-          'guestIds': guests,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      } else {
-        transaction.update(ref, {
-          'memberIds': members,
-          'guestIds': guests,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+      final members = <String>[];
+      final currentMembers = List<dynamic>.from(data['memberIds'] ?? const <dynamic>[]);
+      for (final value in currentMembers) {
+        if (value is String && value.trim().isNotEmpty) {
+          members.add(value.trim());
+        }
       }
-    });
+      final guests = List<String>.from(data['guestIds'] ?? const <dynamic>[])
+        ..where((value) => value.trim().isNotEmpty)
+        .toList();
+
+      if (members.contains(safeUserId)) {
+        return;
+      }
+
+      members.add(safeUserId);
+      guests.removeWhere((value) => value.trim() == safeUserId);
+
+      transaction.update(ref, {
+        'memberIds': members,
+        'guestIds': guests,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }).timeout(_messageWriteTimeout);
+  }
+
+  Future<bool> joinChannel({
+    required String channelId,
+    required String userId,
+  }) async {
+    final safeUserId = userId.trim();
+    if (safeUserId.isEmpty) return false;
+
+    final currentUser = _auth.currentUser;
+    if (currentUser == null || currentUser.uid != safeUserId) return false;
+
+    try {
+      await addMember(channelId: channelId, userId: safeUserId);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> leaveChannel({
+    required String channelId,
+    required String userId,
+  }) async {
+    final safeUserId = userId.trim();
+    if (safeUserId.isEmpty) return false;
+
+    final currentUser = _auth.currentUser;
+    if (currentUser == null || currentUser.uid != safeUserId) return false;
+
+    final ref = _firestore.collection('channels').doc(channelId);
+
+    try {
+      await _firestore.runTransaction((transaction) async {
+        final snapshot = await transaction.get(ref);
+        if (!snapshot.exists) return;
+
+        final data = snapshot.data() ?? {};
+        final channelAdminId = (data['adminId'] as String? ?? '').trim();
+        if (channelAdminId == safeUserId) {
+          return;
+        }
+
+        final members = <String>[];
+        for (final value in List<dynamic>.from(data['memberIds'] ?? const <dynamic>[])) {
+          if (value is String && value.trim().isNotEmpty && value.trim() != safeUserId) {
+            members.add(value.trim());
+          }
+        }
+
+        final guests = <String>[];
+        for (final value in List<dynamic>.from(data['guestIds'] ?? const <dynamic>[])) {
+          if (value is String && value.trim().isNotEmpty && value.trim() != safeUserId) {
+            guests.add(value.trim());
+          }
+        }
+
+        transaction.update(ref, {
+          'memberIds': members,
+          'guestIds': guests,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }).timeout(_messageWriteTimeout);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static const List<String> adminPermissionKeys = [
+    'canPost',
+    'canEditPosts',
+    'canDeletePosts',
+    'canManageMembers',
+    'canAddMembers',
+    'canRemoveMembers',
+    'canPinPosts',
+    'canManageContent',
+  ];
+
+  static Map<String, bool> defaultAdminPermissions() {
+    return {
+      for (final key in adminPermissionKeys) key: true,
+    };
+  }
+
+  Future<Map<String, bool>> getAdminPermissions({
+    required String channelId,
+    required String userId,
+  }) async {
+    final doc = await _firestore.collection('channels').doc(channelId).get();
+    if (!doc.exists) return {};
+
+    final channel = Channel.fromFirestore(doc);
+    final permissions = channel.adminPermissions[userId.trim()];
+    if (permissions == null || permissions.isEmpty) {
+      return userId.trim() == channel.adminId ? defaultAdminPermissions() : {};
+    }
+    return permissions;
+  }
+
+  Future<void> setAdminPermissions({
+    required String channelId,
+    required String ownerId,
+    required String adminUserId,
+    required Map<String, bool> permissions,
+  }) async {
+    final safeOwnerId = ownerId.trim();
+    final safeAdminUserId = adminUserId.trim();
+    if (safeOwnerId.isEmpty || safeAdminUserId.isEmpty) return;
+
+    final ref = _firestore.collection('channels').doc(channelId);
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(ref);
+      if (!snapshot.exists) return;
+
+      final data = snapshot.data() ?? {};
+      final currentOwnerId = (data['adminId'] as String? ?? '').trim();
+      if (currentOwnerId != safeOwnerId) {
+        throw Exception('مالك القناة فقط يمكنه تعديل صلاحيات المشرفين');
+      }
+
+      final moderators = <String>[];
+      for (final value in List<dynamic>.from(data['moderators'] ?? const <dynamic>[])) {
+        if (value is String && value.trim().isNotEmpty) {
+          moderators.add(value.trim());
+        }
+      }
+
+      if (!moderators.contains(safeAdminUserId)) {
+        throw Exception('المستخدم المحدد ليس مشرفًا');
+      }
+
+      final normalizedPermissions = <String, bool>{};
+      for (final key in adminPermissionKeys) {
+        normalizedPermissions[key] = permissions[key] == true;
+      }
+
+      final currentPermissions = Map<String, Map<String, bool>>.from(
+        (data['adminPermissions'] as Map? ?? const {})
+            .map((key, value) => MapEntry(key.toString(), Map<String, bool>.from(value as Map? ?? const {}))),
+      );
+
+      currentPermissions[safeAdminUserId] = normalizedPermissions;
+      transaction.update(ref, {
+        'adminPermissions': currentPermissions,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }).timeout(_messageWriteTimeout);
   }
 
   Future<void> addModerator({
     required String channelId,
     required String userId,
   }) async {
-    if (userId.trim().isEmpty) return;
+    final safeUserId = userId.trim();
+    if (safeUserId.isEmpty) return;
+
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('المستخدم غير مسجل دخول');
+    }
+
     final ref = _firestore.collection('channels').doc(channelId);
+    final userRef = _firestore.collection('users').doc(safeUserId);
+
     await _firestore.runTransaction((transaction) async {
-      final snapshot = await transaction.get(ref);
-      if (!snapshot.exists) return;
-      final data = snapshot.data() ?? {};
-      final moderators = List<String>.from(data['moderators'] ?? []);
-      final members = List<String>.from(data['memberIds'] ?? []);
-      if (!moderators.contains(userId)) moderators.add(userId);
-      if (!members.contains(userId)) members.add(userId);
+      final channelSnapshot = await transaction.get(ref);
+      if (!channelSnapshot.exists) return;
+
+      final channelData = channelSnapshot.data() ?? {};
+      final ownerId = (channelData['adminId'] as String? ?? '').trim();
+      if (ownerId != currentUser.uid) {
+        throw Exception('مالك القناة فقط يمكنه إضافة المشرفين');
+      }
+
+      final targetUserSnapshot = await transaction.get(userRef);
+      if (!targetUserSnapshot.exists) {
+        throw Exception('المستخدم المحدد غير موجود');
+      }
+
+      if (safeUserId == ownerId) {
+        throw Exception('لا يمكن إضافة مالك القناة كـ Admin');
+      }
+
+      final moderators = <String>[];
+      for (final value in List<dynamic>.from(channelData['moderators'] ?? const <dynamic>[])) {
+        if (value is String && value.trim().isNotEmpty) {
+          moderators.add(value.trim());
+        }
+      }
+
+      if (userExistsInList(moderators, safeUserId)) {
+        return;
+      }
+
+      final members = <String>[];
+      for (final value in List<dynamic>.from(channelData['memberIds'] ?? const <dynamic>[])) {
+        if (value is String && value.trim().isNotEmpty) {
+          members.add(value.trim());
+        }
+      }
+
+      if (!members.contains(safeUserId)) {
+        members.add(safeUserId);
+      }
+
+      moderators.add(safeUserId);
       transaction.update(ref, {
         'moderators': moderators,
         'memberIds': members,
         'updatedAt': FieldValue.serverTimestamp(),
       });
-    });
+    }).timeout(_messageWriteTimeout);
   }
 
   Future<void> removeMember({
@@ -281,19 +538,41 @@ class ChannelService {
     required String channelId,
     required String userId,
   }) async {
-    if (userId.trim().isEmpty) return;
+    final safeUserId = userId.trim();
+    if (safeUserId.isEmpty) return;
+
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) {
+      throw Exception('المستخدم غير مسجل دخول');
+    }
+
     final ref = _firestore.collection('channels').doc(channelId);
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(ref);
       if (!snapshot.exists) return;
+
       final data = snapshot.data() ?? {};
-      final moderators = List<String>.from(data['moderators'] ?? []);
-      moderators.removeWhere((value) => value == userId);
+      final ownerId = (data['adminId'] as String? ?? '').trim();
+      if (ownerId != currentUser.uid) {
+        throw Exception('مالك القناة فقط يمكنه إزالة المشرفين');
+      }
+
+      if (safeUserId == ownerId) {
+        throw Exception('لا يمكن إزالة مالك القناة');
+      }
+
+      final moderators = <String>[];
+      for (final value in List<dynamic>.from(data['moderators'] ?? const <dynamic>[])) {
+        if (value is String && value.trim().isNotEmpty && value.trim() != safeUserId) {
+          moderators.add(value.trim());
+        }
+      }
+
       transaction.update(ref, {
         'moderators': moderators,
         'updatedAt': FieldValue.serverTimestamp(),
       });
-    });
+    }).timeout(_messageWriteTimeout);
   }
 
   static String _normalizeAccessType(String accessType, bool fallbackPrivate) {
@@ -333,6 +612,9 @@ class ChannelService {
     String? description,
     String? imageUrl,
     bool? isActive,
+    String? handle,
+    String? category,
+    String? coverImageUrl,
   }) async {
     await _ensureAdmin();
 
@@ -340,10 +622,261 @@ class ChannelService {
     if (name != null) payload['name'] = name.trim();
     if (description != null) payload['description'] = description.trim();
     if (imageUrl != null) payload['imageUrl'] = imageUrl;
+    if (coverImageUrl != null) payload['coverImageUrl'] = coverImageUrl;
+    if (handle != null) payload['handle'] = handle.trim();
+    if (category != null) payload['category'] = category.trim();
     if (isActive != null) payload['isActive'] = isActive;
     payload['updatedAt'] = FieldValue.serverTimestamp();
 
     await _firestore.collection('channels').doc(channelId).update(payload);
+  }
+
+  Stream<List<Channel>> followedChannels(String userId) {
+    final safeUserId = userId.trim();
+    if (safeUserId.isEmpty) return Stream.value(const <Channel>[]);
+
+    return _firestore
+        .collection('channels')
+        .where('followers', arrayContains: safeUserId)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map(Channel.fromFirestore).toList());
+  }
+
+  Future<List<Channel>> searchChannels(String query, {String? category}) async {
+    final normalized = query.trim();
+    if (normalized.isEmpty && (category == null || category.trim().isEmpty)) {
+      return const <Channel>[];
+    }
+
+    final snapshot = await _firestore.collection('channels').where('isActive', isEqualTo: true).get();
+    final channels = snapshot.docs.map(Channel.fromFirestore).where((channel) {
+      final matchesCategory = category == null || category.trim().isEmpty || channel.category.toLowerCase() == category.trim().toLowerCase();
+      if (!matchesCategory) return false;
+      if (normalized.isEmpty) return true;
+      final haystack = '${channel.name} ${channel.description} ${channel.adminName} ${channel.handle} ${channel.category}'.toLowerCase();
+      return haystack.contains(normalized.toLowerCase());
+    }).toList();
+
+    return channels;
+  }
+
+  Future<bool> isFollowingChannel({required String channelId, required String userId}) async {
+    final safeChannelId = channelId.trim();
+    final safeUserId = userId.trim();
+    if (safeChannelId.isEmpty || safeUserId.isEmpty) return false;
+
+    final channel = await getChannel(safeChannelId);
+    if (channel == null) return false;
+    return channel.followerIds.contains(safeUserId);
+  }
+
+  Future<bool> followChannel({required String channelId, required String userId}) async {
+    final safeChannelId = channelId.trim();
+    final safeUserId = userId.trim();
+    if (safeChannelId.isEmpty || safeUserId.isEmpty) return false;
+
+    final ref = _firestore.collection('channels').doc(safeChannelId);
+    try {
+      await _firestore.runTransaction((transaction) async {
+        final snapshot = await transaction.get(ref);
+        if (!snapshot.exists) throw Exception('القناة غير موجودة');
+
+        final data = snapshot.data() ?? <String, dynamic>{};
+        final followerIds = <String>[];
+        for (final value in List<dynamic>.from(data['followers'] ?? const <dynamic>[])) {
+          if (value is String && value.trim().isNotEmpty) followerIds.add(value.trim());
+        }
+        if (followerIds.contains(safeUserId)) {
+          return;
+        }
+
+        followerIds.add(safeUserId);
+        transaction.update(ref, {
+          'followers': followerIds,
+          'followersCount': followerIds.length,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }).timeout(_messageWriteTimeout);
+
+      final channel = await getChannel(safeChannelId);
+      if (channel != null && channel.adminId != safeUserId) {
+        await NotificationService().createNotification(
+          senderId: safeUserId,
+          receiverId: channel.adminId,
+          type: 'channel_follow',
+          referenceId: safeChannelId,
+          roomId: safeChannelId,
+          channelId: safeChannelId,
+          postId: '',
+        );
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> unfollowChannel({required String channelId, required String userId}) async {
+    final safeChannelId = channelId.trim();
+    final safeUserId = userId.trim();
+    if (safeChannelId.isEmpty || safeUserId.isEmpty) return false;
+
+    final ref = _firestore.collection('channels').doc(safeChannelId);
+    try {
+      await _firestore.runTransaction((transaction) async {
+        final snapshot = await transaction.get(ref);
+        if (!snapshot.exists) throw Exception('القناة غير موجودة');
+
+        final data = snapshot.data() ?? <String, dynamic>{};
+        final followerIds = <String>[];
+        for (final value in List<dynamic>.from(data['followers'] ?? const <dynamic>[])) {
+          if (value is String && value.trim().isNotEmpty && value.trim() != safeUserId) {
+            followerIds.add(value.trim());
+          }
+        }
+
+        transaction.update(ref, {
+          'followers': followerIds,
+          'followersCount': followerIds.length,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }).timeout(_messageWriteTimeout);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static bool hasPermission(
+    Channel channel,
+    String userId,
+    String permissionKey,
+  ) {
+    final safeUserId = userId.trim();
+    if (safeUserId.isEmpty) return false;
+
+    if (channel.adminId == safeUserId) return true;
+
+    final normalizedModerators = channel.moderators
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    if (normalizedModerators.contains(safeUserId)) {
+      final explicitPermission = channel.adminPermissions[safeUserId]?[permissionKey];
+      if (explicitPermission == false) {
+        return false;
+      }
+      return true;
+    }
+
+    final permissions = channel.adminPermissions[safeUserId] ?? const {};
+    if (permissions[permissionKey] == true) return true;
+
+    return false;
+  }
+
+  static void validateChannelPostPayload({
+    required String text,
+    required String mediaUrl,
+    required String mediaType,
+  }) {
+    final normalizedText = text.trim();
+    final normalizedMediaUrl = mediaUrl.trim();
+    final normalizedMediaType = mediaType.trim().toLowerCase();
+
+    if (normalizedText.isEmpty && normalizedMediaUrl.isEmpty) {
+      throw Exception('لا يمكن إنشاء منشور فارغ');
+    }
+
+    if (normalizedMediaUrl.isNotEmpty) {
+      final mediaUri = Uri.tryParse(normalizedMediaUrl);
+      if (mediaUri == null ||
+          mediaUri.scheme != 'https' ||
+          mediaUri.host.isEmpty) {
+        throw Exception('رابط الوسائط غير صالح');
+      }
+    }
+
+    if (normalizedText.isEmpty && normalizedMediaType.isEmpty) {
+      throw Exception('نوع المنشور غير صالح');
+    }
+
+    final supportedTypes = {
+      'text',
+      'image',
+      'video',
+      'audio',
+      'file',
+      'document',
+      'none',
+    };
+    if (normalizedMediaUrl.isNotEmpty &&
+        !supportedTypes.contains(normalizedMediaType)) {
+      throw Exception('نوع الوسائط غير مدعوم في القناة');
+    }
+  }
+
+  static bool isUserViewRecorded({
+    required List<dynamic>? viewedBy,
+    required String userId,
+  }) {
+    final safeUserId = userId.trim();
+    if (safeUserId.isEmpty) return true;
+
+    for (final value in viewedBy ?? const <dynamic>[]) {
+      if (value is String && value.trim() == safeUserId) return true;
+      if (value is Map && value['userId'] is String) {
+        final mappedUserId = (value['userId'] as String).trim();
+        if (mappedUserId == safeUserId) return true;
+      }
+    }
+
+    return false;
+  }
+
+  Future<void> recordMessageView({
+    required String channelId,
+    required String messageId,
+    required String userId,
+  }) async {
+    final safeUserId = userId.trim();
+    final safeMessageId = messageId.trim();
+    if (safeUserId.isEmpty || safeMessageId.isEmpty) {
+      return;
+    }
+
+    final messageRef = _firestore
+        .collection('channels')
+        .doc(channelId)
+        .collection('messages')
+        .doc(safeMessageId);
+
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(messageRef);
+      if (!snapshot.exists) return;
+
+      final data = snapshot.data() ?? <String, dynamic>{};
+      final existingViewers = <String>[];
+      for (final value in data['viewedBy'] as List<dynamic>? ?? const <dynamic>[]) {
+        if (value is String && value.trim().isNotEmpty) {
+          existingViewers.add(value.trim());
+        } else if (value is Map && value['userId'] is String) {
+          final mappedUserId = (value['userId'] as String).trim();
+          if (mappedUserId.isNotEmpty) existingViewers.add(mappedUserId);
+        }
+      }
+
+      if (existingViewers.contains(safeUserId)) {
+        return;
+      }
+
+      final updatedViewers = [...existingViewers, safeUserId];
+      transaction.update(messageRef, {
+        'viewedBy': updatedViewers,
+        'viewCount': updatedViewers.length,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }).timeout(_messageWriteTimeout);
   }
 
   Future<void> publishMessage({
@@ -361,20 +894,26 @@ class ChannelService {
       throw Exception('المستخدم غير مسجل دخول');
     }
 
-    // تم تعطيل هذا السطر ليتمكن جميع المستخدمين من النشر داخل القنوات
-    // await _ensureAdmin();
+    final resolvedSenderId = senderId.trim().isNotEmpty ? senderId.trim() : currentUser.uid;
+    final resolvedSenderName = senderName.trim().isNotEmpty
+        ? senderName.trim()
+        : (currentUser.email ?? 'مستخدم');
 
-    if (text.trim().isEmpty && mediaUrl.trim().isEmpty) {
-      throw Exception('لا يمكن إنشاء منشور فارغ');
+    validateChannelPostPayload(
+      text: text,
+      mediaUrl: mediaUrl,
+      mediaType: mediaType,
+    );
+
+    final channelDoc = await _firestore.collection('channels').doc(channelId).get();
+    if (!channelDoc.exists) {
+      throw Exception('القناة غير موجودة');
     }
 
-    if (mediaUrl.trim().isNotEmpty) {
-      final mediaUri = Uri.tryParse(mediaUrl.trim());
-      if (mediaUri == null ||
-          mediaUri.scheme != 'https' ||
-          mediaUri.host.isEmpty) {
-        throw Exception('رابط الوسائط غير صالح');
-      }
+    final channel = Channel.fromFirestore(channelDoc);
+    final canPublish = hasPermission(channel, resolvedSenderId, 'canPost');
+    if (!canPublish) {
+      throw Exception('ليس لديك صلاحية نشر منشورات في هذه القناة');
     }
 
     final messageReference =
@@ -390,29 +929,46 @@ class ChannelService {
               .collection('messages')
               .doc(clientRequestId.trim());
 
-    await messageReference
-        .set({
-          'channelId': channelId,
-          'senderId': currentUser.uid,
-          'senderName': senderName.isNotEmpty
-              ? senderName
-              : (currentUser.email ?? 'مستخدم'),
-          'text': text.trim(),
-          'mediaUrl': mediaUrl,
-          'mediaType': mediaType,
-          'thumbnailUrl': thumbnailUrl,
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-          'isDeleted': false,
-          'parentMessageId': '', // تأكيد أنها رسالة أساسية وليست تعليق
-        })
-        .timeout(_messageWriteTimeout);
+    final payload = buildMessagePayload(
+      channelId: channelId,
+      senderId: resolvedSenderId,
+      senderName: resolvedSenderName,
+      text: text,
+      mediaUrl: mediaUrl,
+      mediaType: mediaType,
+      thumbnailUrl: thumbnailUrl,
+      parentMessageId: '',
+      reactions: const {},
+      replyCount: 0,
+      extraData: const {},
+    );
+
+    await messageReference.set(payload).timeout(_messageWriteTimeout);
 
     await _firestore
         .collection('channels')
         .doc(channelId)
         .update({'updatedAt': FieldValue.serverTimestamp()})
         .timeout(_messageWriteTimeout);
+
+    try {
+      final receiverIds = <String>{
+        ...channel.memberIds,
+        ...channel.moderators,
+        ...channel.guestIds,
+      }.where((value) => value.trim().isNotEmpty).toList();
+
+      await NotificationService().sendChannelPostNotification(
+        channelId: channelId,
+        postId: messageReference.id,
+        channelName: channel.name,
+        senderId: resolvedSenderId,
+        senderName: resolvedSenderName,
+        receiverIds: receiverIds,
+      );
+    } catch (_) {
+      // Do not let notification delivery failures block channel post creation.
+    }
   }
 
   Future<void> updateMessage({
@@ -447,14 +1003,34 @@ class ChannelService {
     required String channelId,
     required String messageId,
   }) async {
-    await _ensureAdmin();
-
-    await _firestore
+    final messageRef = _firestore
         .collection('channels')
         .doc(channelId)
         .collection('messages')
-        .doc(messageId)
-        .update({'isDeleted': true, 'updatedAt': FieldValue.serverTimestamp()});
+        .doc(messageId);
+
+    final channelRef = _firestore.collection('channels').doc(channelId);
+
+    await _firestore.runTransaction((transaction) async {
+      final messageSnapshot = await transaction.get(messageRef);
+      if (!messageSnapshot.exists) return;
+
+      final channelSnapshot = await transaction.get(channelRef);
+      if (channelSnapshot.exists) {
+        final pinnedMessageId = (channelSnapshot.data()?['pinnedMessageId'] as String? ?? '').trim();
+        if (pinnedMessageId == messageId.trim()) {
+          transaction.update(channelRef, {
+            'pinnedMessageId': '',
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+
+      transaction.update(messageRef, {
+        'isDeleted': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }).timeout(_messageWriteTimeout);
   }
 
   // --- دالة التفاعل مع الرسائل (Reactions) ---
@@ -525,6 +1101,11 @@ class ChannelService {
     if (currentUser == null) throw Exception('المستخدم غير مسجل دخول');
     if (text.trim().isEmpty) throw Exception('لا يمكن إرسال تعليق فارغ');
 
+    final resolvedSenderId = senderId.trim().isNotEmpty ? senderId.trim() : currentUser.uid;
+    final resolvedSenderName = senderName.trim().isNotEmpty
+        ? senderName.trim()
+        : (currentUser.email ?? 'مستخدم');
+
     final batch = _firestore.batch();
 
     final commentRef = _firestore
@@ -532,31 +1113,29 @@ class ChannelService {
         .doc(channelId)
         .collection('messages')
         .doc();
-    batch.set(commentRef, {
-      'channelId': channelId,
-      'senderId': currentUser.uid,
-      'senderName': senderName.isNotEmpty
-          ? senderName
-          : (currentUser.email ?? 'مستخدم'),
-      'text': text.trim(),
-      'mediaUrl': '',
-      'mediaType': 'text',
-      'thumbnailUrl': '',
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-      'isDeleted': false,
-      'parentMessageId': parentMessageId,
-      'reactions': {},
-      'replyCount': 0,
-      'extraData': {},
-    });
+    batch.set(
+      commentRef,
+      buildMessagePayload(
+        channelId: channelId,
+        senderId: resolvedSenderId,
+        senderName: resolvedSenderName,
+        text: text,
+        parentMessageId: parentMessageId,
+        reactions: const {},
+        replyCount: 0,
+        extraData: const {},
+      ),
+    );
 
     final parentRef = _firestore
         .collection('channels')
         .doc(channelId)
         .collection('messages')
         .doc(parentMessageId);
-    batch.update(parentRef, {'replyCount': FieldValue.increment(1)});
+    batch.update(parentRef, {
+      'replyCount': FieldValue.increment(1),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
 
     await batch.commit();
   }
@@ -565,17 +1144,68 @@ class ChannelService {
   Future<void> pinMessage({
     required String channelId,
     required String messageId,
+    String? currentUserId,
   }) async {
-    await _ensureAdmin();
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) throw Exception('المستخدم غير مسجل دخول');
+
+    final effectiveUserId = (currentUserId ?? currentUser.uid).trim();
+    if (effectiveUserId.isEmpty) throw Exception('معرّف المستخدم غير صالح');
+
+    final channelDoc = await _firestore.collection('channels').doc(channelId).get();
+    if (!channelDoc.exists) return;
+
+    final channel = Channel.fromFirestore(channelDoc);
+    final isOwner = channel.adminId == effectiveUserId;
+    final permissions = channel.adminPermissions[effectiveUserId] ?? const {};
+    final canPin = isOwner || permissions['canPinPosts'] == true;
+    if (!canPin) {
+      throw Exception('ليس لديك صلاحية تثبيت المنشورات');
+    }
+
+    final messageRef = _firestore
+        .collection('channels')
+        .doc(channelId)
+        .collection('messages')
+        .doc(messageId);
+    final messageSnapshot = await messageRef.get();
+    if (!messageSnapshot.exists) throw Exception('المنشور المطلوب غير موجود');
+    final messageData = messageSnapshot.data() ?? <String, dynamic>{};
+    if (messageData['isDeleted'] == true) {
+      throw Exception('لا يمكن تثبيت منشور محذوف');
+    }
+
+    if ((channel.pinnedMessageId).trim() == messageId.trim()) return;
+
     await _firestore.collection('channels').doc(channelId).update({
       'pinnedMessageId': messageId,
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
-  Future<void> unpinMessage({required String channelId}) async {
-    await _ensureAdmin();
+  Future<void> unpinMessage({required String channelId, String? currentUserId}) async {
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) throw Exception('المستخدم غير مسجل دخول');
+
+    final effectiveUserId = (currentUserId ?? currentUser.uid).trim();
+    if (effectiveUserId.isEmpty) throw Exception('معرّف المستخدم غير صالح');
+
+    final channelDoc = await _firestore.collection('channels').doc(channelId).get();
+    if (!channelDoc.exists) return;
+
+    final channel = Channel.fromFirestore(channelDoc);
+    final isOwner = channel.adminId == effectiveUserId;
+    final permissions = channel.adminPermissions[effectiveUserId] ?? const {};
+    final canPin = isOwner || permissions['canPinPosts'] == true;
+    if (!canPin) {
+      throw Exception('ليس لديك صلاحية إلغاء تثبيت المنشورات');
+    }
+
+    if ((channel.pinnedMessageId).trim().isEmpty) return;
+
     await _firestore.collection('channels').doc(channelId).update({
       'pinnedMessageId': '',
+      'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
@@ -590,7 +1220,9 @@ class ChannelService {
         .doc(messageId)
         .get();
     if (!doc.exists) return null;
-    return ChannelMessage.fromFirestore(doc, channelId);
+    final message = ChannelMessage.fromFirestore(doc, channelId);
+    if (message.isDeleted) return null;
+    return message;
   }
 
   // --- دوال الاستطلاعات (Polls) ---
@@ -616,32 +1248,28 @@ class ChannelService {
         )
         .toList();
 
+    final resolvedSenderId = senderId.trim().isNotEmpty ? senderId.trim() : currentUser.uid;
+    final resolvedSenderName = senderName.trim().isNotEmpty
+        ? senderName.trim()
+        : (currentUser.email ?? 'مستخدم');
+
     await _firestore
         .collection('channels')
         .doc(channelId)
         .collection('messages')
-        .add({
-          'channelId': channelId,
-          'senderId': currentUser.uid,
-          'senderName': senderName.isNotEmpty
-              ? senderName
-              : (currentUser.email ?? 'مستخدم'),
-          'text': '📊 استطلاع رأي: $question',
-          'mediaUrl': '',
-          'mediaType': 'text',
-          'thumbnailUrl': '',
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-          'isDeleted': false,
-          'parentMessageId': '',
-          'reactions': {},
-          'replyCount': 0,
-          'extraData': {
-            'isPoll': true,
-            'pollQuestion': question,
-            'pollOptions': pollOptions,
-          },
-        });
+        .add(
+          buildMessagePayload(
+            channelId: channelId,
+            senderId: resolvedSenderId,
+            senderName: resolvedSenderName,
+            text: '📊 استطلاع رأي: $question',
+            extraData: {
+              'isPoll': true,
+              'pollQuestion': question,
+              'pollOptions': pollOptions,
+            },
+          ),
+        );
 
     await _firestore.collection('channels').doc(channelId).update({
       'updatedAt': FieldValue.serverTimestamp(),

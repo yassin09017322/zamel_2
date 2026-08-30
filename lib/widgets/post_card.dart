@@ -1274,6 +1274,21 @@ class _PostCardState extends State<PostCard>
                               ),
                             );
                           }
+                          if (snapshot.hasError) {
+                            return Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Text(
+                                  'تعذر تحميل التعليقات\n${snapshot.error}',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Colors.red,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            );
+                          }
                           final comments = snapshot.data ?? [];
                           if (comments.isEmpty) {
                             return const Center(
@@ -1358,14 +1373,14 @@ class _PostCardState extends State<PostCard>
                                               await _toggleAudioPlayback(
                                                 comment,
                                               );
-                                            } catch (_) {
+                                            } catch (error) {
                                               if (mounted) {
                                                 ScaffoldMessenger.of(
                                                   context,
                                                 ).showSnackBar(
-                                                  const SnackBar(
+                                                  SnackBar(
                                                     content: Text(
-                                                      'تعذر تشغيل الصوت',
+                                                      'تعذر تشغيل الصوت: $error',
                                                     ),
                                                   ),
                                                 );
@@ -1711,9 +1726,9 @@ class _PostCardState extends State<PostCard>
                                               ScaffoldMessenger.of(
                                                 context,
                                               ).showSnackBar(
-                                                const SnackBar(
+                                                SnackBar(
                                                   content: Text(
-                                                    'فشل إرسال الصوت',
+                                                    'فشل إرسال الصوت: $error',
                                                   ),
                                                 ),
                                               );
@@ -1760,9 +1775,9 @@ class _PostCardState extends State<PostCard>
                                           ScaffoldMessenger.of(
                                             context,
                                           ).showSnackBar(
-                                            const SnackBar(
+                                            SnackBar(
                                               content: Text(
-                                                'فشل إرسال التعليق',
+                                                'فشل إرسال التعليق: $error',
                                               ),
                                             ),
                                           );

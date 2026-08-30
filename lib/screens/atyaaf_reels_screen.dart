@@ -1014,6 +1014,7 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
   Widget build(BuildContext context) {
     final provider = context.watch<AtyaafProvider>();
     final authProvider = context.watch<AuthProvider>();
+    final cinematicModeEnabled = provider.cinematicModeEnabled;
 
     if (provider.isLoading && provider.videos.isEmpty) {
       return const Scaffold(
@@ -1097,32 +1098,67 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     }
 
     return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          if (_isUploadingReel)
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: LinearProgressIndicator(
-                value: _uploadProgress.clamp(0.0, 1.0),
-                minHeight: 3,
-                backgroundColor: Colors.white24,
-                color: const Color(0xFFE94057),
+      backgroundColor: cinematicModeEnabled ? const Color(0xFF090B12) : Colors.black,
+      body: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        decoration: cinematicModeEnabled
+            ? const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0xFF0D111B),
+                    Color(0xFF060A12),
+                    Color(0xFF000000),
+                  ],
+                  stops: [0.0, 0.55, 1.0],
+                ),
+              )
+            : const BoxDecoration(color: Colors.black),
+        child: Stack(
+          children: [
+            if (cinematicModeEnabled)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.black.withValues(alpha: 0.18),
+                          Colors.transparent,
+                          Colors.black.withValues(alpha: 0.78),
+                        ],
+                        stops: const [0.0, 0.52, 1.0],
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
-          PageView.builder(
-            controller: _pageController,
-            scrollDirection: Axis.vertical,
-            pageSnapping: true,
-            physics: const PageScrollPhysics(),
-            itemCount: provider.videos.length,
-            onPageChanged: (index) async {
-              setState(() => _currentIndex = index);
-              await _activateVideo(index);
-            },
-            itemBuilder: (context, index) {
+            if (_isUploadingReel)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: LinearProgressIndicator(
+                  value: _uploadProgress.clamp(0.0, 1.0),
+                  minHeight: 3,
+                  backgroundColor: Colors.white24,
+                  color: const Color(0xFFE94057),
+                ),
+              ),
+            PageView.builder(
+              controller: _pageController,
+              scrollDirection: Axis.vertical,
+              pageSnapping: true,
+              physics: const PageScrollPhysics(),
+              itemCount: provider.videos.length,
+              onPageChanged: (index) async {
+                setState(() => _currentIndex = index);
+                await _activateVideo(index);
+              },
+              itemBuilder: (context, index) {
               final video = provider.videos[index];
               final controller = _controllers[index];
 
@@ -1166,50 +1202,53 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
                   await _reloadVideos();
                 },
               );
-            },
-          ),
+              },
+            ),
 
-          SafeArea(
-            child: Directionality(
-              textDirection: TextDirection.rtl,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16.0,
-                  vertical: 12.0,
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'أطياف',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        shadows: [
-                          Shadow(color: Colors.black54, blurRadius: 10),
-                        ],
-                      ),
-                    ),
-                    GestureDetector(
-                      onTap: _isUploadingReel
-                          ? null
-                          : () => _uploadReel(context),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.5),
-                          shape: BoxShape.circle,
+            SafeArea(
+              child: Directionality(
+                textDirection: TextDirection.rtl,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 12.0,
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'أطياف',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          shadows: [
+                            Shadow(color: Colors.black54, blurRadius: 10),
+                          ],
                         ),
-                        child: const Icon(Icons.add, color: Colors.white),
                       ),
-                    ),
-                  ],
+                      GestureDetector(
+                        onTap: _isUploadingReel
+                            ? null
+                            : () => _uploadReel(context),
+                        child: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: cinematicModeEnabled
+                                ? Colors.black.withValues(alpha: 0.32)
+                                : Colors.black.withValues(alpha: 0.5),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.add, color: Colors.white),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

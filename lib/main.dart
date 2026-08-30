@@ -22,6 +22,8 @@ import 'screens/atyaaf_reels_screen.dart';
 import 'screens/banned_screen.dart';
 import 'screens/channels_screen.dart';
 import 'screens/feature_ideas_screen.dart';
+import 'screens/group_details_screen.dart';
+import 'screens/groups_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
@@ -211,6 +213,12 @@ class ZamelApp extends StatelessWidget {
                 '/atyaaf': (_) => const AtyaafReelsScreen(),
                 '/channels': (_) => const ChannelsScreen(),
                 '/ideas': (_) => const FeatureIdeasScreen(),
+                '/groups': (_) => const GroupsScreen(),
+                '/group_details': (context) {
+                  final args = ModalRoute.of(context)?.settings.arguments;
+                  final groupId = args is String ? args : '';
+                  return GroupDetailsScreen(groupId: groupId);
+                },
                 '/registration': (_) => const RegisterScreen(),
                 '/home': (_) => const HomeScreen(),
               },

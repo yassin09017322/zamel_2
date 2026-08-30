@@ -52,18 +52,20 @@ class StoryLocalStorageService {
   }
 
   Future<String?> getLocalPath(Story story) async {
-    if (kIsWeb || !story.isActiveAt(DateTime.now().toUtc())) return null;
+    if (kIsWeb || story.id.trim().isEmpty || !story.isActiveAt(DateTime.now().toUtc())) {
+      return null;
+    }
+
     final isar = await IsarService.init();
     if (isar == null) return null;
     final cache = await isar.storyLocalCaches
         .filter()
         .storyIdEqualTo(story.id)
-        .build() // 🔥 إضافة build() عشان دالة findFirst تشتغل بدون أخطاء
+        .build()
         .findFirst();
-    if (cache == null || cache.expiresAt.toUtc() != story.expiresAt.toUtc()) {
-      return null;
-    }
-    final file = io.File(cache.localFilePath); // 🔥 استخدام io.File
+    if (cache == null) return null;
+
+    final file = io.File(cache.localFilePath);
     if (!await file.exists() || await file.length() <= 0) return null;
     return cache.localFilePath;
   }

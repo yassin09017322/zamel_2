@@ -18,6 +18,8 @@ class ChannelMessage {
   final int replyCount; // عدد التعليقات (الثريد)
   final String parentMessageId; // أيدي الرسالة الأصلية لو كان هذا تعليقاً
   final int mediaDuration; // مدة المقطع الصوتي أو الفيديو بالثواني
+  final int viewCount; // عدد المشاهدات الفريدة للمنشور
+  final List<String> viewedBy; // قائمة المستخدمين الذين شاهدوا المنشور
   final Map<String, dynamic> extraData; // مساحة حرة لبيانات إضافية زي (الاستطلاعات Polls)
   // ------------------------------------------
 
@@ -38,6 +40,8 @@ class ChannelMessage {
     this.replyCount = 0,
     this.parentMessageId = '',
     this.mediaDuration = 0,
+    this.viewCount = 0,
+    this.viewedBy = const [],
     this.extraData = const {},
   });
 
@@ -53,8 +57,8 @@ class ChannelMessage {
       mediaUrl: data['mediaUrl'] as String? ?? '',
       mediaType: data['mediaType'] as String? ?? 'text',
       thumbnailUrl: data['thumbnailUrl'] as String? ?? '',
-      createdAt: _coerceTimestamp(data['createdAt']),
-      updatedAt: _coerceTimestamp(data['updatedAt']),
+      createdAt: _coerceTimestamp(data['createdAt'] ?? data['timestamp']),
+      updatedAt: _coerceTimestamp(data['updatedAt'] ?? data['createdAt'] ?? data['timestamp']),
       isDeleted: data['isDeleted'] as bool? ?? false,
 
       // استخراج البيانات الجديدة من فايربيس
@@ -62,6 +66,12 @@ class ChannelMessage {
       replyCount: data['replyCount'] as int? ?? 0,
       parentMessageId: data['parentMessageId'] as String? ?? '',
       mediaDuration: data['mediaDuration'] as int? ?? 0,
+      viewCount: data['viewCount'] is int
+          ? data['viewCount'] as int
+          : (data['viewCount'] is num ? (data['viewCount'] as num).toInt() : 0),
+      viewedBy: (data['viewedBy'] as List<dynamic>? ?? const [])
+          .map((item) => item.toString())
+          .toList(),
       extraData: data['extraData'] as Map<String, dynamic>? ?? {},
     );
   }
@@ -84,6 +94,8 @@ class ChannelMessage {
       'replyCount': replyCount,
       'parentMessageId': parentMessageId,
       'mediaDuration': mediaDuration,
+      'viewCount': viewCount,
+      'viewedBy': viewedBy,
       'extraData': extraData,
     };
   }

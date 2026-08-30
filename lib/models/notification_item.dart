@@ -7,6 +7,8 @@ class NotificationItem {
   final String type;
   final String referenceId;
   final String roomId;
+  final String channelId;
+  final String postId;
   final bool isRead;
   final DateTime timestamp;
 
@@ -17,6 +19,8 @@ class NotificationItem {
     required this.type,
     required this.referenceId,
     required this.roomId,
+    required this.channelId,
+    required this.postId,
     required this.isRead,
     required this.timestamp,
   });
@@ -40,6 +44,8 @@ class NotificationItem {
       type: data['type'] as String? ?? 'system_alert',
       referenceId: data['referenceId'] as String? ?? '',
       roomId: data['roomId'] as String? ?? '',
+      channelId: data['channelId'] as String? ?? '',
+      postId: data['postId'] as String? ?? '',
       isRead: data['isRead'] as bool? ?? false,
       timestamp: date,
     );

@@ -12,7 +12,18 @@ class AtyaafProvider extends ChangeNotifier {
   List<AtyaafVideo> videos = <AtyaafVideo>[];
   bool isLoading = false;
   String? errorMessage;
+  bool cinematicModeEnabled = false;
   final Set<String> _savedVideoIds = <String>{};
+
+  void setCinematicMode(bool value) {
+    if (cinematicModeEnabled == value) return;
+    cinematicModeEnabled = value;
+    notifyListeners();
+  }
+
+  void toggleCinematicMode() {
+    setCinematicMode(!cinematicModeEnabled);
+  }
 
   Future<void> loadVideos() async {
     isLoading = true;

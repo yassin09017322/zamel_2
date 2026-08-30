@@ -37,6 +37,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
   bool _isRecording = false;
   bool _isUpdatingChannelImage = false;
   double _uploadProgress = 0.0; // 🔥 متغير جديد لمتابعة نسبة الرفع بدقة
+  final Set<String> _registeredMessageViews = <String>{};
 
   @override
   void dispose() {
@@ -182,23 +183,52 @@ class _ChannelScreenState extends State<ChannelScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (isAdmin) ...[
-              ListTile(
-                leading: const Icon(Icons.push_pin, color: Colors.blue),
-                title: const Text(
-                  'تثبيت الرسالة',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-                onTap: () {
-                  _channelService.pinMessage(
+            ListTile(
+              leading: const Icon(Icons.push_pin, color: Colors.blue),
+              title: const Text(
+                'تثبيت الرسالة',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              onTap: () async {
+                final channel = await _channelService.getChannel(widget.channelId);
+                if (channel == null) {
+                  Navigator.pop(ctx);
+                  return;
+                }
+
+                final hasPinPermission = isAdmin ||
+                    channel.adminId == currentUserId ||
+                    channel.adminPermissions[currentUserId]?['canPinPosts'] == true;
+
+                if (!hasPinPermission) {
+                  Navigator.pop(ctx);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('ليس لديك صلاحية تثبيت المنشورات')),
+                    );
+                  }
+                  return;
+                }
+
+                try {
+                  await _channelService.pinMessage(
                     channelId: widget.channelId,
                     messageId: message.id,
+                    currentUserId: currentUserId,
                   );
-                  Navigator.pop(ctx);
-                },
-              ),
-              const Divider(),
-            ],
+                  if (mounted) setState(() {});
+                } catch (error) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(error.toString())),
+                    );
+                  }
+                } finally {
+                  if (mounted) Navigator.pop(ctx);
+                }
+              },
+            ),
+            const Divider(),
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
               child: Row(
@@ -553,10 +583,13 @@ class _ChannelScreenState extends State<ChannelScreen> {
   }
 
   Widget _buildChannelComposer(Channel channel, dynamic currentUser) {
+    final userId = currentUser?.id ?? '';
     final canPost =
-        !channel.isReadOnly ||
-        currentUser?.id == channel.adminId ||
-        channel.moderators.contains(currentUser?.id ?? '');
+        !channel.isReadOnly &&
+        (currentUser != null &&
+            (currentUser.id == channel.adminId ||
+                channel.moderators.contains(currentUser.id) ||
+                ChannelService.hasPermission(channel, userId, 'canPost')));
 
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
@@ -695,14 +728,40 @@ class _ChannelScreenState extends State<ChannelScreen> {
     );
   }
 
-  Widget _buildMessageBubble(ChannelMessage message, bool isMine) {
+  Future<void> _registerMessageViewIfNeeded(
+    ChannelMessage message,
+    String currentUserId,
+  ) async {
+    if (currentUserId.isEmpty) return;
+    if (message.senderId == currentUserId) return;
+    if (message.viewedBy.contains(currentUserId)) {
+      _registeredMessageViews.add(message.id);
+      return;
+    }
+    if (_registeredMessageViews.contains(message.id)) return;
+
+    _registeredMessageViews.add(message.id);
+    try {
+      await _channelService.recordMessageView(
+        channelId: widget.channelId,
+        messageId: message.id,
+        userId: currentUserId,
+      );
+    } catch (_) {
+      _registeredMessageViews.remove(message.id);
+    }
+  }
+
+  Widget _buildMessageBubble(ChannelMessage message, bool isMine, String currentUserId) {
     final bubbleColor = isMine ? const Color(0xFF5B6CFF) : Colors.white;
     final textColor = isMine ? Colors.white : Colors.black87;
     final accentColor = isMine ? Colors.white70 : Colors.grey;
 
-    return Align(
-      alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-      child: ConstrainedBox(
+    return GestureDetector(
+      onTap: null,
+      child: Align(
+        alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+        child: ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.78,
         ),
@@ -817,15 +876,51 @@ class _ChannelScreenState extends State<ChannelScreen> {
                   padding: const EdgeInsets.only(top: 8),
                   child: _buildReactionsWidget(message, isMine ? 'self' : ''),
                 ),
-              if (message.replyCount > 0)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: GestureDetector(
-                    onTap: () => _openCommentsSheet(message),
-                    child: Container(
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (message.replyCount > 0)
+                    GestureDetector(
+                      onTap: () => _openCommentsSheet(message),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isMine
+                              ? Colors.white.withOpacity(0.15)
+                              : Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.mode_comment_outlined,
+                              size: 14,
+                              color: accentColor,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '${message.replyCount} تعليق',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: accentColor,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (message.viewCount > 0 || message.replyCount > 0)
+                    const SizedBox(width: 8),
+                  if (message.viewCount > 0)
+                    Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
+                        horizontal: 8,
+                        vertical: 5,
                       ),
                       decoration: BoxDecoration(
                         color: isMine
@@ -836,14 +931,14 @@ class _ChannelScreenState extends State<ChannelScreen> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(
-                            Icons.mode_comment_outlined,
+                          const Icon(
+                            Icons.visibility_outlined,
                             size: 14,
-                            color: accentColor,
+                            color: Colors.blue,
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            '${message.replyCount} تعليق',
+                            '${message.viewCount}',
                             style: TextStyle(
                               fontSize: 11,
                               color: accentColor,
@@ -853,135 +948,251 @@ class _ChannelScreenState extends State<ChannelScreen> {
                         ],
                       ),
                     ),
-                  ),
-                ),
+                ],
+              ),
             ],
           ),
         ),
       ),
-    );
+    ));
   }
 
   Future<void> _showChannelManagementSheet(Channel channel) async {
     final currentUser = context.read<AuthProvider>().currentUser;
     final isOwner = currentUser?.id == channel.adminId;
-    if (!isOwner && !channel.moderators.contains(currentUser?.id ?? '')) return;
+    if (!isOwner) return;
 
     final moderatorTextController = TextEditingController();
     final displayNames = await _channelService.fetchUsersDisplayNames(
       channel.moderators,
     );
+    final adminPermissions = <String, Map<String, bool>>{
+      ...channel.adminPermissions,
+    };
 
     if (!mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (sheetContext) => Container(
-        height: MediaQuery.of(context).size.height * 0.72,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 42,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'إدارة القناة',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: moderatorTextController,
-                textDirection: TextDirection.rtl,
-                decoration: const InputDecoration(
-                  hintText: 'أضف معرف مشرف (userId)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.person_add_alt_1_rounded),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setState) {
+          final currentPermissions = <String, Map<String, bool>>{...adminPermissions};
+          return Container(
+            height: MediaQuery.of(context).size.height * 0.82,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade300,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'إدارة القناة',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: moderatorTextController,
+                    textDirection: TextDirection.rtl,
+                    decoration: const InputDecoration(
+                      hintText: 'أضف معرف مشرف (userId)',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.person_add_alt_1_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            final userId = moderatorTextController.text.trim();
+                            if (userId.isEmpty) return;
+                            try {
+                              await _channelService.addModerator(
+                                channelId: widget.channelId,
+                                userId: userId,
+                              );
+                              final freshChannel = await _channelService.getChannel(widget.channelId);
+                              if (freshChannel != null && mounted) {
+                                adminPermissions.clear();
+                                adminPermissions.addAll(freshChannel.adminPermissions);
+                              }
+                              if (sheetContext.mounted) Navigator.pop(sheetContext);
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('تمت إضافة المشرف')),
+                                );
+                              }
+                            } catch (error) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(error.toString())),
+                                );
+                              }
+                            }
+                          },
+                          icon: const Icon(Icons.add),
+                          label: const Text('إضافة مشرف'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'المشرفون الحاليون',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
                   Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () async {
-                        final userId = moderatorTextController.text.trim();
-                        if (userId.isEmpty) return;
-                        await _channelService.addModerator(
-                          channelId: widget.channelId,
-                          userId: userId,
+                    child: ListView.builder(
+                      itemCount: channel.moderators.length,
+                      itemBuilder: (_, index) {
+                        final id = channel.moderators[index];
+                        final label = displayNames[id] ?? id;
+                        final isOwnerId = id == channel.adminId;
+                        final permissions = currentPermissions[id] ?? ChannelService.defaultAdminPermissions();
+                        return ListTile(
+                          leading: CircleAvatar(
+                            child: Text(label.substring(0, 1).toUpperCase()),
+                          ),
+                          title: Text(label),
+                          subtitle: Text(isOwnerId ? 'مالك القناة' : 'مشرف'),
+                          trailing: isOwnerId
+                              ? const Icon(
+                                  Icons.verified_rounded,
+                                  color: Colors.green,
+                                )
+                              : IconButton(
+                                  onPressed: () async {
+                                    try {
+                                      await _channelService.removeModerator(
+                                        channelId: widget.channelId,
+                                        userId: id,
+                                      );
+                                      if (sheetContext.mounted) Navigator.pop(sheetContext);
+                                    } catch (error) {
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          SnackBar(content: Text(error.toString())),
+                                        );
+                                      }
+                                    }
+                                  },
+                                  icon: const Icon(
+                                    Icons.remove_circle_outline_rounded,
+                                    color: Colors.red,
+                                  ),
+                                ),
+                          onTap: isOwnerId ? null : () async {
+                            final permissionMap = <String, bool>{
+                              'canPost': permissions['canPost'] ?? true,
+                              'canEditPosts': permissions['canEditPosts'] ?? true,
+                              'canDeletePosts': permissions['canDeletePosts'] ?? true,
+                              'canManageMembers': permissions['canManageMembers'] ?? true,
+                              'canAddMembers': permissions['canAddMembers'] ?? true,
+                              'canRemoveMembers': permissions['canRemoveMembers'] ?? true,
+                              'canPinPosts': permissions['canPinPosts'] ?? true,
+                              'canManageContent': permissions['canManageContent'] ?? true,
+                            };
+
+                            final edited = await showDialog<Map<String, bool>>(
+                              context: context,
+                              builder: (dialogContext) {
+                                return AlertDialog(
+                                  title: Text('صلاحيات $label'),
+                                  content: StatefulBuilder(
+                                    builder: (context, setInnerState) {
+                                      return SingleChildScrollView(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: permissionMap.keys.map((key) {
+                                            final labelText = switch (key) {
+                                              'canPost' => 'نشر المنشورات',
+                                              'canEditPosts' => 'تعديل المنشورات',
+                                              'canDeletePosts' => 'حذف المنشورات',
+                                              'canManageMembers' => 'إدارة الأعضاء',
+                                              'canAddMembers' => 'إضافة أعضاء',
+                                              'canRemoveMembers' => 'إزالة أعضاء',
+                                              'canPinPosts' => 'تثبيت المنشورات',
+                                              'canManageContent' => 'إدارة المحتوى',
+                                              _ => key,
+                                            };
+                                            return CheckboxListTile(
+                                              value: permissionMap[key] ?? false,
+                                              title: Text(labelText),
+                                              onChanged: (value) {
+                                                if (value == null) return;
+                                                permissionMap[key] = value;
+                                                setInnerState(() {});
+                                              },
+                                            );
+                                          }).toList(),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(dialogContext),
+                                      child: const Text('إلغاء'),
+                                    ),
+                                    FilledButton(
+                                      onPressed: () => Navigator.pop(dialogContext, permissionMap),
+                                      child: const Text('حفظ'),
+                                    ),
+                                  ],
+                                );
+                              },
+                            );
+
+                            if (edited == null) return;
+                            try {
+                              await _channelService.setAdminPermissions(
+                                channelId: widget.channelId,
+                                ownerId: currentUser?.id ?? '',
+                                adminUserId: id,
+                                permissions: edited,
+                              );
+                              final freshChannel = await _channelService.getChannel(widget.channelId);
+                              if (freshChannel != null && mounted) {
+                                adminPermissions.clear();
+                                adminPermissions.addAll(freshChannel.adminPermissions);
+                              }
+                              if (mounted) {
+                                setState(() {});
+                              }
+                            } catch (error) {
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text(error.toString())),
+                                );
+                              }
+                            }
+                          },
                         );
-                        if (sheetContext.mounted) Navigator.pop(sheetContext);
-                        if (mounted)
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('تمت إضافة المشرف')),
-                          );
                       },
-                      icon: const Icon(Icons.add),
-                      label: const Text('إضافة مشرف'),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-              const Text(
-                'المشرفون الحاليون',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: channel.moderators.length,
-                  itemBuilder: (_, index) {
-                    final id = channel.moderators[index];
-                    final label = displayNames[id] ?? id;
-                    final isAdminId = id == channel.adminId;
-                    return ListTile(
-                      leading: CircleAvatar(
-                        child: Text(label.substring(0, 1).toUpperCase()),
-                      ),
-                      title: Text(label),
-                      subtitle: Text(isAdminId ? 'مالك القناة' : 'مشرف'),
-                      trailing: isAdminId
-                          ? const Icon(
-                              Icons.verified_rounded,
-                              color: Colors.green,
-                            )
-                          : IconButton(
-                              onPressed: () async {
-                                await _channelService.removeModerator(
-                                  channelId: widget.channelId,
-                                  userId: id,
-                                );
-                                if (sheetContext.mounted)
-                                  Navigator.pop(sheetContext);
-                              },
-                              icon: const Icon(
-                                Icons.remove_circle_outline_rounded,
-                                color: Colors.red,
-                              ),
-                            ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -1576,11 +1787,8 @@ class _ChannelScreenState extends State<ChannelScreen> {
             future: _channelService.getChannel(widget.channelId),
             builder: (context, snapshot) {
               final channel = snapshot.data;
-              final isManager =
-                  channel != null &&
-                  (currentUser?.id == channel.adminId ||
-                      channel.moderators.contains(currentUser?.id ?? ''));
-              if (!isManager && !isAdmin) return const SizedBox.shrink();
+              final isOwner = channel != null && currentUser?.id == channel.adminId;
+              if (!isOwner && !isAdmin) return const SizedBox.shrink();
               return PopupMenuButton<String>(
                 onSelected: (value) async {
                   if (value == 'settings') {
@@ -1606,14 +1814,24 @@ class _ChannelScreenState extends State<ChannelScreen> {
                     }
                   }
                 },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(
-                    value: 'settings',
-                    child: Text('إعدادات القناة'),
-                  ),
-                  PopupMenuItem(value: 'mods', child: Text('إدارة المشرفين')),
-                  PopupMenuItem(value: 'members', child: Text('أعضاء القناة')),
-                ],
+                itemBuilder: (context) {
+                  final items = <PopupMenuEntry<String>>[
+                    const PopupMenuItem(
+                      value: 'settings',
+                      child: Text('إعدادات القناة'),
+                    ),
+                    if (isOwner)
+                      const PopupMenuItem(
+                        value: 'mods',
+                        child: Text('إدارة المشرفين'),
+                      ),
+                    const PopupMenuItem(
+                      value: 'members',
+                      child: Text('أعضاء القناة'),
+                    ),
+                  ];
+                  return items;
+                },
               );
             },
           ),
@@ -1823,17 +2041,28 @@ class _ChannelScreenState extends State<ChannelScreen> {
                       itemCount: messages.length,
                       itemBuilder: (_, index) {
                         final message = messages[index];
-                        final isMine =
-                            message.senderId == (currentUser?.id ?? '');
+                        final currentUserId = currentUser?.id ?? '';
+                        final isMine = message.senderId == currentUserId;
+
+                        if (!isMine && currentUserId.isNotEmpty) {
+                          Future.microtask(() {
+                            if (!mounted) return;
+                            _registerMessageViewIfNeeded(message, currentUserId);
+                          });
+                        }
 
                         return GestureDetector(
                           onLongPress: () => _showLongPressOptions(
                             context,
                             message,
-                            currentUser?.id ?? '',
+                            currentUserId,
                             isAdmin,
                           ),
-                          child: _buildMessageBubble(message, isMine),
+                          child: _buildMessageBubble(
+                            message,
+                            isMine,
+                            currentUserId,
+                          ),
                         );
                       },
                     );
@@ -1852,6 +2081,30 @@ class _ChannelScreenState extends State<ChannelScreen> {
     if (currentUser == null) return;
     final text = _textController.text.trim();
     if (text.isEmpty) return;
+
+    if (!ChannelService.hasPermission(
+      await _channelService.getChannel(widget.channelId) ??
+          Channel(
+            id: widget.channelId,
+            name: '',
+            description: '',
+            adminId: '',
+            adminName: '',
+            imageUrl: '',
+            isActive: true,
+            createdAt: DateTime.now(),
+            updatedAt: DateTime.now(),
+          ),
+      currentUser.id,
+      'canPost',
+    )) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ليس لديك صلاحية نشر منشورات في هذه القناة')),
+        );
+      }
+      return;
+    }
 
     setState(() => _isPublishing = true);
     try {
@@ -1880,6 +2133,25 @@ class _ChannelScreenState extends State<ChannelScreen> {
     String currentUserId, {
     bool isVideo = false,
   }) async {
+    final channel = await _channelService.getChannel(widget.channelId);
+    if (channel == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('القناة غير موجودة')),
+        );
+      }
+      return;
+    }
+
+    if (!ChannelService.hasPermission(channel, currentUserId, 'canPost')) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ليس لديك صلاحية نشر منشورات في هذه القناة')),
+        );
+      }
+      return;
+    }
+
     final result = await FilePicker.platform.pickFiles(
       type: isVideo ? FileType.video : FileType.image,
       allowCompression: true,

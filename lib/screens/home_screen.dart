@@ -20,6 +20,7 @@ import 'atyaaf_reels_screen.dart';
 import 'channels_screen.dart';
 import 'feature_ideas_screen.dart';
 import 'feed_screen.dart';
+import 'groups_screen.dart';
 import 'notifications_screen.dart';
 import 'profile_screen.dart';
 import 'settings_screen.dart';
@@ -205,6 +206,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const ChannelsScreen()),
+                    );
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.groups_2_rounded),
+                  tooltip: 'المجموعات',
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const GroupsScreen()),
                     );
                   },
                 ),
