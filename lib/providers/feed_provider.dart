@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/post.dart';
 import '../models/app_user.dart'; // تم إضافة استدعاء موديل المستخدم
+import '../models/category_model.dart';
 import '../services/category_service.dart';
 import 'settings_provider.dart';
 
@@ -105,10 +108,14 @@ class FeedProvider extends ChangeNotifier {
       query = query.startAfterDocument(_lastDocument!);
     }
 
-    final snapshot = await query.get();
+    final snapshot = await query.get().timeout(
+      const Duration(seconds: 15),
+      onTimeout: () => throw TimeoutException('Firestore query timeout after 15 seconds'),
+    );
     if (snapshot.docs.length < pageSize) hasMore = false;
     if (snapshot.docs.isEmpty) {
       hasMore = false;
+      notifyListeners();
       return;
     }
 
@@ -127,6 +134,7 @@ class FeedProvider extends ChangeNotifier {
         .toList();
 
     posts = append ? [...posts, ...nextPosts] : nextPosts;
+    notifyListeners();
   }
 
   Future<void> _loadUserFilters(AppUser? currentUser) async {
@@ -146,11 +154,18 @@ class FeedProvider extends ChangeNotifier {
 
   Future<String?> _resolveCategoryId(String? categoryId) async {
     if (categoryId == null || categoryId == 'all') return null;
-    final categories = await CategoryService.fetchCategories();
-    return SettingsProvider.resolveCategoryIdForFeedMode(
-      categoryId,
-      categories.map((category) => category.id),
-    );
+    try {
+      final categories = await CategoryService.fetchCategories().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => <CategoryModel>[],
+      );
+      return SettingsProvider.resolveCategoryIdForFeedMode(
+        categoryId,
+        categories.map((category) => category.id),
+      );
+    } catch (e) {
+      return null;
+    }
   }
 
   static String normalizeCategoryFilter(String? categoryId) {
