@@ -45,6 +45,52 @@ class _FeedScreenState extends State<FeedScreen> {
     super.dispose();
   }
 
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    debugPrint('🔵 FEED: didChangeDependencies() called');
+    _loadFeedForCurrentContext();
+  }
+
+  void _loadFeedForCurrentContext() {
+    debugPrint('🔵 FEED: _loadFeedForCurrentContext() entered');
+    final feedProvider = context.read<FeedProvider>();
+    final authProvider = context.read<AuthProvider>();
+    
+    debugPrint('🔵 FEED: authProvider.isLoading=${authProvider.isLoading}');
+    debugPrint('🔵 FEED: currentUser=${authProvider.currentUser?.id}');
+    
+    // Do not start feed loading until auth initialization completes
+    if (authProvider.isLoading) {
+      debugPrint('🔵 FEED: Auth still loading, returning early');
+      return;
+    }
+    
+    final selectedMode = context.watch<SettingsProvider>().feedMode;
+    final feedKey = '${selectedMode}:${authProvider.currentUser?.id ?? ''}';
+    debugPrint('🔵 FEED: Generated feedKey=$feedKey, previous _feedKey=$_feedKey');
+    if (_feedKey == feedKey) {
+      debugPrint('🔵 FEED: feedKey unchanged, returning early');
+      return;
+    }
+
+    _feedKey = feedKey;
+    debugPrint('🔵 FEED: Scheduling loadFirstPage with categoryId=$selectedMode');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        debugPrint('🔵 FEED: Widget not mounted, skipping loadFirstPage');
+        return;
+      }
+      debugPrint('🔵 FEED: Calling loadFirstPage()');
+      unawaited(
+        feedProvider.loadFirstPage(
+          categoryId: selectedMode,
+          currentUser: authProvider.currentUser,
+        ),
+      );
+    });
+  }
+
   void _handleFeedScroll() {
     if (!_feedScrollController.hasClients) return;
     final position = _feedScrollController.position;
@@ -734,18 +780,8 @@ class _FeedScreenState extends State<FeedScreen> {
   Widget build(BuildContext context) {
     final feedProvider = Provider.of<FeedProvider>(context);
     final authProvider = context.watch<AuthProvider>();
-    final settingsProvider = context.watch<SettingsProvider>();
-    final selectedMode = settingsProvider.feedMode;
-    final feedKey = '${selectedMode}:${authProvider.currentUser?.id ?? ''}';
-    if (_feedKey != feedKey) {
-      _feedKey = feedKey;
-      unawaited(
-        feedProvider.loadFirstPage(
-          categoryId: selectedMode,
-          currentUser: authProvider.currentUser,
-        ),
-      );
-    }
+
+    debugPrint('🔵 FEED BUILD: isLoading=${feedProvider.isLoading}, posts.length=${feedProvider.posts.length}, isLoadingMore=${feedProvider.isLoadingMore}, errorMessage=${feedProvider.errorMessage}');
 
     final isArabic = context.locale.languageCode == 'ar';
 

@@ -29,7 +29,11 @@ class FeedProvider extends ChangeNotifier {
   Set<String> _reducedCategoryIds = <String>{};
 
   Future<void> loadFirstPage({String? categoryId, AppUser? currentUser}) async {
-    if (isLoading) return;
+    debugPrint('🟠 PROVIDER: loadFirstPage() START - categoryId=$categoryId, userId=${currentUser?.id}');
+    if (isLoading) {
+      debugPrint('🟠 PROVIDER: Already loading, returning early');
+      return;
+    }
 
     isLoading = true;
     errorMessage = null;
@@ -38,25 +42,39 @@ class FeedProvider extends ChangeNotifier {
     _lastDocument = null;
     hasMore = true;
     posts = <Post>[];
+    debugPrint('🟠 PROVIDER: Set isLoading=true, posts.clear(), notifying...');
     notifyListeners();
 
     try {
+      debugPrint('🟠 PROVIDER: Calling _loadUserFilters()');
       await _loadUserFilters(currentUser);
+      debugPrint('🟠 PROVIDER: _loadUserFilters() complete');
+      
+      debugPrint('🟠 PROVIDER: Calling _resolveCategoryId()');
       _activeResolvedCategoryId = await _resolveCategoryId(_activeCategoryId);
+      debugPrint('🟠 PROVIDER: _resolveCategoryId() complete, resolved=$_activeResolvedCategoryId');
+      
       if (_activeCategoryId != 'all' && _activeResolvedCategoryId == null) {
+        debugPrint('🟠 PROVIDER: Category not found, setting hasMore=false');
         hasMore = false;
         return;
       }
+      
+      debugPrint('🟠 PROVIDER: Calling _loadPage()');
       await _loadPage(
         currentUser: currentUser,
         categoryId: _activeResolvedCategoryId,
         append: false,
       );
+      debugPrint('🟠 PROVIDER: _loadPage() complete, posts.length=${posts.length}');
     } catch (error) {
+      debugPrint('🟠 PROVIDER: CAUGHT ERROR: $error');
       errorMessage = error.toString();
     } finally {
       isLoading = false;
+      debugPrint('🟠 PROVIDER: loadFirstPage() FINALLY - setting isLoading=false, posts.length=${posts.length}');
       notifyListeners();
+      debugPrint('🟠 PROVIDER: loadFirstPage() END');
     }
   }
 
@@ -92,6 +110,7 @@ class FeedProvider extends ChangeNotifier {
     required String? categoryId,
     required bool append,
   }) async {
+    debugPrint('🟡 LOADPAGE: START - categoryId=$categoryId, append=$append, _lastDocument=${_lastDocument != null}');
     Query<Map<String, dynamic>> query = firestore
         .collection('posts')
         .orderBy('timestamp', descending: true)
@@ -108,12 +127,16 @@ class FeedProvider extends ChangeNotifier {
       query = query.startAfterDocument(_lastDocument!);
     }
 
+    debugPrint('🟡 LOADPAGE: Firestore query built, executing...');
     final snapshot = await query.get().timeout(
       const Duration(seconds: 15),
       onTimeout: () => throw TimeoutException('Firestore query timeout after 15 seconds'),
     );
+    debugPrint('🟡 LOADPAGE: Firestore returned ${snapshot.docs.length} documents');
+    
     if (snapshot.docs.length < pageSize) hasMore = false;
     if (snapshot.docs.isEmpty) {
+      debugPrint('🟡 LOADPAGE: No documents, setting hasMore=false');
       hasMore = false;
       notifyListeners();
       return;
@@ -121,6 +144,7 @@ class FeedProvider extends ChangeNotifier {
 
     _lastDocument = snapshot.docs.last;
     final existingIds = posts.map((post) => post.id).toSet();
+    debugPrint('🟡 LOADPAGE: Parsing ${snapshot.docs.length} documents...');
     final nextPosts = snapshot.docs
         .map(Post.fromFirestore)
         .where((post) => _isVisibleToUser(post, currentUser))
@@ -133,8 +157,11 @@ class FeedProvider extends ChangeNotifier {
         .where((post) => !existingIds.contains(post.id))
         .toList();
 
+    debugPrint('🟡 LOADPAGE: Parsed and filtered to ${nextPosts.length} posts');
     posts = append ? [...posts, ...nextPosts] : nextPosts;
+    debugPrint('🟡 LOADPAGE: Total posts now: ${posts.length}, notifying...');
     notifyListeners();
+    debugPrint('🟡 LOADPAGE: END');
   }
 
   Future<void> _loadUserFilters(AppUser? currentUser) async {
@@ -143,13 +170,23 @@ class FeedProvider extends ChangeNotifier {
     final userId = currentUser?.id.trim() ?? '';
     if (userId.isEmpty) return;
 
-    final userSnapshot = await firestore.collection('users').doc(userId).get();
-    final userData = userSnapshot.data();
-    if (userData == null) return;
-    _excludedPostIds.addAll(_stringList(userData['hiddenPostIds']));
-    _reducedCategoryIds.addAll(
-      _stringList(userData['reducedPostCategoryIds']),
-    );
+    try {
+      final userSnapshot = await firestore
+          .collection('users')
+          .doc(userId)
+          .get()
+          .timeout(const Duration(seconds: 10));
+      final userData = userSnapshot.data();
+      if (userData == null) return;
+      _excludedPostIds.addAll(_stringList(userData['hiddenPostIds']));
+      _reducedCategoryIds.addAll(
+        _stringList(userData['reducedPostCategoryIds']),
+      );
+    } catch (error) {
+      debugPrint('Feed user filters unavailable: $error');
+      _excludedPostIds = <String>{};
+      _reducedCategoryIds = <String>{};
+    }
   }
 
   Future<String?> _resolveCategoryId(String? categoryId) async {

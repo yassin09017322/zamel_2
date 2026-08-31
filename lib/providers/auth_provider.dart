@@ -18,11 +18,14 @@ class AuthProvider extends ChangeNotifier {
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _userSubscription;
 
   AuthProvider() {
+    debugPrint('🟢 AUTH: AuthProvider() INIT - isLoading=true');
     _initialize();
   }
 
   Future<void> _initialize() async {
+    debugPrint('🟢 AUTH: _initialize() listening to authStateChanges');
     auth.authStateChanges().listen((firebaseUser) async {
+      debugPrint('🟢 AUTH: authStateChanges fired, firebaseUser=${firebaseUser?.uid}, emailVerified=${firebaseUser?.emailVerified}');
       isLoading = true;
       errorMessage = null;
       notifyListeners();
@@ -32,6 +35,7 @@ class AuthProvider extends ChangeNotifier {
 
       // منع الدخول نهائياً إذا لم يكن المستخدم موجوداً أو بريده غير مفعل
       if (firebaseUser == null || !firebaseUser.emailVerified) {
+        debugPrint('🟢 AUTH: No firebaseUser or email not verified, setting currentUser=null');
         currentUser = null;
         isLoading = false;
         notifyListeners();
@@ -40,20 +44,26 @@ class AuthProvider extends ChangeNotifier {
 
       // جلب بيانات المستخدم من فايرستور
       final userRef = firestore.collection('users').doc(firebaseUser.uid);
+      debugPrint('🟢 AUTH: Setting up user snapshot listener for ${firebaseUser.uid}');
       _userSubscription = userRef.snapshots().listen(
         (snapshot) async {
+          debugPrint('🟢 AUTH: User snapshot received, exists=${snapshot.exists}');
           if (snapshot.exists && snapshot.data() != null) {
             currentUser = AppUser.fromFirestore(snapshot.data()!, firebaseUser.uid);
+            debugPrint('🟢 AUTH: currentUser loaded=${currentUser?.id}');
             if (currentUser != null && currentUser!.isOnline != true) {
               await updateUserPresence(online: true);
             }
           } else {
+            debugPrint('🟢 AUTH: User snapshot data null, setting currentUser=null');
             currentUser = null;
           }
           isLoading = false;
+          debugPrint('🟢 AUTH: Setting isLoading=false, notifying...');
           notifyListeners();
         },
         onError: (error) {
+          debugPrint('🟢 AUTH: User snapshot ERROR: $error');
           errorMessage = error.toString();
           isLoading = false;
           notifyListeners();
