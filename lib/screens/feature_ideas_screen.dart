@@ -43,6 +43,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
     final engagement = context.watch<EngagementProvider>();
     final atyaafProvider = context.watch<AtyaafProvider>();
     final currentUser = context.watch<AuthProvider>().currentUser;
+    final colorScheme = Theme.of(context).colorScheme;
     final double progress = (engagement.points / 500.0).clamp(0.0, 1.0);
     final l10n = AppLocalizations.of(context);
 
@@ -83,7 +84,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                 children: [
                   const Icon(Icons.science_rounded, size: 48, color: Color(0xFF5B6CFF)),
                   const SizedBox(height: 8),
-                  Text(l10n.featureIdeasSubtitle, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                  Text(l10n.featureIdeasSubtitle, style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14)),
                 ],
               ),
             ),
@@ -94,7 +95,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
             const SizedBox(height: 12),
             Container(
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: colorScheme.surface,
                 borderRadius: BorderRadius.circular(16),
                 boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
               ),
@@ -113,7 +114,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                     value: _focusModeEnabled,
                     onChanged: (val) => setState(() => _focusModeEnabled = val),
                   ),
-                  Divider(height: 1, color: Colors.grey[200]),
+                  Divider(height: 1, color: colorScheme.outlineVariant),
                   SwitchListTile(
                     title: Text(l10n.featureIdeasCinemaMode, style: const TextStyle(fontWeight: FontWeight.bold)),
                     subtitle: Text(l10n.featureIdeasCinemaModeSubtitle),
@@ -264,7 +265,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                     return Container(
                       margin: const EdgeInsets.only(bottom: 12),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: colorScheme.surface,
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 10, offset: const Offset(0, 4))],
                       ),
@@ -273,7 +274,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                         title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
                         subtitle: Padding(
                           padding: const EdgeInsets.only(top: 4.0),
-                          child: Text('$votes مستخدم يطالبون بهذه الميزة', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+                          child: Text('$votes مستخدم يطالبون بهذه الميزة', style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12)),
                         ),
                         trailing: InkWell(
                           onTap: (!isLoggedIn || currentUserId == null || _focusModeEnabled)
@@ -286,7 +287,7 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                             decoration: BoxDecoration(
                               gradient: isVoted
                                   ? const LinearGradient(colors: [Color(0xFFE94057), Color(0xFFF27121)])
-                                  : LinearGradient(colors: [Colors.grey[200]!, Colors.grey[200]!]),
+                                  : LinearGradient(colors: [colorScheme.surfaceContainerHighest, colorScheme.surfaceContainerHighest]),
                               borderRadius: BorderRadius.circular(24),
                               boxShadow: isVoted
                                   ? [BoxShadow(color: const Color(0xFFE94057).withValues(alpha: 0.3), blurRadius: 8, offset: const Offset(0, 3))]
@@ -297,14 +298,14 @@ class _FeatureIdeasScreenState extends State<FeatureIdeasScreen> {
                               children: [
                                 Icon(
                                   isVoted ? Icons.local_fire_department_rounded : Icons.local_fire_department_outlined,
-                                  color: isVoted ? Colors.white : Colors.grey[600],
+                                  color: isVoted ? Colors.white : colorScheme.onSurfaceVariant,
                                   size: 18,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
                                   isVoted ? l10n.featureIdeasVoted : l10n.featureIdeasVote,
                                   style: TextStyle(
-                                    color: isVoted ? Colors.white : Colors.grey[700],
+                                    color: isVoted ? Colors.white : colorScheme.onSurface,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),

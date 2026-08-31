@@ -35,7 +35,8 @@ class GroupPost {
       authorName: data['authorName'] as String? ?? 'مستخدم',
       text: data['text'] as String? ?? '',
       mediaUrl: data['mediaUrl'] as String? ?? '',
-      mediaType: data['mediaType'] as String? ?? 'none',
+      mediaType: data['mediaType'] as String? ??
+          ((data['mediaUrl'] as String? ?? '').isNotEmpty ? 'image' : 'none'),
       createdAt: createdAt is Timestamp ? createdAt.toDate() : DateTime.now(),
       likes: List<String>.from(data['likes'] ?? const []),
       commentsCount: (data['commentsCount'] as num?)?.toInt() ?? 0,

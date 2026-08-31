@@ -508,7 +508,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     int? fileSize,
   }) async {
     if (_mediaUploadActive) return;
-    _mediaUploadActive = true;
+    final isImageUpload = mediaType == ChatMessageType.image;
+    if (isImageUpload) _mediaUploadActive = true;
     final String tempMessageId =
         'local_${DateTime.now().microsecondsSinceEpoch}';
 
@@ -517,8 +518,49 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
         (webBytes != null
             ? XFile.fromData(webBytes, name: webFileName ?? 'chat_media')
             : null);
+    int resolvedFileSize = fileSize ?? webBytes?.length ?? 0;
+
+    if (mediaType == ChatMessageType.image) {
+      try {
+        if (uploadFile == null) {
+          throw Exception('لم يتم العثور على صورة صالحة للرفع');
+        }
+        if (kIsWeb && (webBytes == null || webBytes.isEmpty)) {
+          throw Exception('بيانات الصورة فارغة');
+        }
+        if (!kIsWeb) {
+          resolvedFileSize = await uploadFile.length();
+          if (resolvedFileSize == 0) {
+            throw Exception('ملف الصورة فارغ');
+          }
+        }
+        final imageName = (webFileName ?? uploadFile.name).toLowerCase();
+        final supportedImage = imageName.endsWith('.jpg') ||
+            imageName.endsWith('.jpeg') ||
+            imageName.endsWith('.png') ||
+            imageName.endsWith('.gif') ||
+            imageName.endsWith('.webp') ||
+            imageName.endsWith('.bmp') ||
+            imageName.endsWith('.ico') ||
+            imageName.endsWith('.svg');
+        if (!supportedImage) {
+          throw Exception('صيغة الصورة غير مدعومة');
+        }
+      } catch (error) {
+        debugPrint('Image validation error: $error');
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('فشل رفع الصورة: $error')));
+        }
+        _mediaUploadActive = false;
+        return;
+      }
+    }
+
+    _mediaUploadActive = true;
     if (uploadFile != null) {
-      _failedMediaFiles[tempMessageId] = uploadFile;
+      _failedMediaFiles[tempMessageId] = uploadFile; // Store failed media file
     }
 
     String getFileName() {
@@ -537,11 +579,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       ..mediaType = mediaType
       ..fileName = getFileName()
       ..fileType = fileType ?? ''
-      ..fileSize =
-          fileSize ??
-            (webBytes != null
-              ? webBytes.length
-              : (uploadFile != null ? await uploadFile.length() : 0))
+      ..fileSize = resolvedFileSize
       ..status = MessageStatus.pending
       ..uploadProgress = 0.0
       ..uploadStartedAt = DateTime.now()
@@ -607,6 +645,14 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       final downloadUrl = uploadResult.url?.trim() ?? '';
       if (!uploadResult.success || downloadUrl.isEmpty) {
         throw Exception(uploadResult.error ?? 'فشل الرفع عبر المحرك');
+      }
+      if (mediaType == ChatMessageType.image) {
+        final downloadUri = Uri.tryParse(downloadUrl);
+        if (downloadUri == null ||
+            downloadUri.scheme != 'https' ||
+            downloadUri.host.isEmpty) {
+          throw Exception('رابط الصورة الناتج من الرفع غير صالح');
+        }
       }
 
       String actualMediaType = mediaType;

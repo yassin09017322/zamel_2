@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../models/group.dart';
 import '../models/group_post.dart';
@@ -567,6 +568,16 @@ class GroupService {
       throw Exception('نوع الوسائط مطلوب عند وجود رابط وسائط');
     }
 
+    if (normalizedMediaUrl.isNotEmpty) {
+      final mediaUri = Uri.tryParse(normalizedMediaUrl);
+      if (mediaUri == null || mediaUri.scheme != 'https' || mediaUri.host.isEmpty) {
+        throw Exception('رابط الوسائط غير صالح');
+      }
+      if (normalizedMediaType != 'image' && normalizedMediaType != 'video') {
+        throw Exception('نوع الوسائط غير مدعوم');
+      }
+    }
+
     final userDoc = await _firestore.collection('users').doc(user.uid).get();
     final authorName =
         userDoc.data()?['username'] as String? ??
@@ -637,22 +648,39 @@ class GroupService {
   }
 
   Future<MediaUploadResult> uploadGroupMedia({
-    required Uint8List bytes,
+    Uint8List? bytes,
+    XFile? file,
     required String fileName,
     required bool isVideo,
+    Function(UploadProgress)? onProgress,
   }) async {
-    if (bytes.isEmpty) {
+    if (bytes != null && bytes.isEmpty) {
       return const MediaUploadResult(
         success: false,
         error: 'ملف الوسائط فارغ',
       );
     }
 
-    final result = await MediaService().uploadBytesWithResult(
-      bytes,
-      fileName,
-      isVideo: isVideo,
-    );
+    if (bytes == null && file == null) {
+      return const MediaUploadResult(
+        success: false,
+        error: 'لم يتم اختيار ملف صالح',
+      );
+    }
+
+    final mediaService = MediaService();
+    final result = bytes != null
+        ? await mediaService.uploadBytesWithResultAndProgress(
+            bytes,
+            fileName,
+            isVideo: isVideo,
+            onProgress: onProgress,
+          )
+        : await mediaService.uploadXFileWithResult(
+            file!,
+            isVideo: isVideo,
+            onProgress: onProgress,
+          );
 
     if (!result.success || (result.url ?? '').trim().isEmpty) {
       return result;

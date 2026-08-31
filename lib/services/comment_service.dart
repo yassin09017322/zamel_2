@@ -47,10 +47,16 @@ class CommentService {
   }
 
   Stream<List<Comment>> commentsStream(String postId, {int? mediaIndex}) {
+    final normalizedPostId = postId.trim();
+    if (normalizedPostId.isEmpty) {
+      return Stream.value(const <Comment>[]);
+    }
+
     Query<Map<String, dynamic>> query = _firestore
         .collection('posts')
-        .doc(postId)
-        .collection('comments');
+        .doc(normalizedPostId)
+        .collection('comments')
+        .orderBy('createdAt', descending: true);
 
     if (mediaIndex != null) {
       query = query.where('mediaIndex', isEqualTo: mediaIndex);
@@ -150,23 +156,25 @@ class CommentService {
               throw Exception('معرف طلب التعليق مستخدم مسبقًا');
             }
 
-            transaction.set(
-              commentReference,
-              buildCommentPayload(
-                postId: postId,
-                userId: effectiveUserId,
-                username: effectiveUsername,
-                text: text,
-                audioUrl: normalizedAudioUrl,
-                publicId: publicId,
-                type: type,
-                duration: duration,
-                mediaIndex: mediaIndex,
-                replyToCommentId: replyToCommentId,
-                replyToUserId: replyToUserId,
-                replyToUsername: replyToUsername,
-              ),
+            final payload = buildCommentPayload(
+              postId: postId,
+              userId: effectiveUserId,
+              username: effectiveUsername,
+              text: text,
+              audioUrl: normalizedAudioUrl,
+              publicId: publicId,
+              type: type,
+              duration: duration,
+              mediaIndex: mediaIndex,
+              replyToCommentId: replyToCommentId,
+              replyToUserId: replyToUserId,
+              replyToUsername: replyToUsername,
             );
+
+            transaction.set(commentReference, payload);
+            transaction.update(postReference, {
+              'commentsCount': FieldValue.increment(1),
+            });
           })
           .timeout(_writeTimeout);
     } on FirebaseException catch (error, stackTrace) {

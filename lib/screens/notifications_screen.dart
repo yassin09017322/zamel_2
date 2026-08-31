@@ -16,6 +16,7 @@ class NotificationsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final userId = context.select<AuthProvider, String?>((provider) => provider.currentUser?.id);
+    final colorScheme = Theme.of(context).colorScheme;
     if (userId == null) {
       return const Scaffold(
         body: Center(child: Text('يرجى تسجيل الدخول لعرض الإشعارات')),
@@ -28,7 +29,7 @@ class NotificationsScreen extends StatelessWidget {
         .orderBy('timestamp', descending: true);
 
     return Scaffold(
-      backgroundColor: Colors.white, // خلفية بيضاء نقية ستايل فيسبوك
+      backgroundColor: colorScheme.surface,
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: notificationsQuery.snapshots(),
         builder: (context, snapshot) {
@@ -40,7 +41,7 @@ class NotificationsScreen extends StatelessWidget {
           }
           final docs = snapshot.data?.docs ?? [];
           if (docs.isEmpty) {
-            return _buildEmptyState();
+            return _buildEmptyState(context);
           }
           
           return ListView.builder(
@@ -92,9 +93,9 @@ class NotificationsScreen extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(
                     // لون الإشعار غير المقروء الأزرق الفاتح (مثل فيسبوك تماماً)
-                    color: item.isRead ? Colors.white : const Color(0xFFE7F3FF),
+                    color: item.isRead ? colorScheme.surface : colorScheme.primaryContainer,
                     border: Border(
-                      bottom: BorderSide(color: Colors.grey.shade200, width: 1),
+                      bottom: BorderSide(color: colorScheme.outlineVariant, width: 1),
                     ),
                   ),
                   child: Row(
@@ -106,9 +107,9 @@ class NotificationsScreen extends StatelessWidget {
                         children: [
                           CircleAvatar(
                             radius: 32,
-                            backgroundColor: Colors.grey.shade200,
+                            backgroundColor: colorScheme.surfaceContainerHighest,
                             backgroundImage: senderAvatar.isNotEmpty ? NetworkImage(senderAvatar) : null,
-                            child: senderAvatar.isEmpty ? const Icon(Icons.person, color: Colors.grey, size: 35) : null,
+                            child: senderAvatar.isEmpty ? Icon(Icons.person, color: colorScheme.onSurfaceVariant, size: 35) : null,
                           ),
                           Positioned(
                             right: -4,
@@ -124,13 +125,13 @@ class NotificationsScreen extends StatelessWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _buildNotificationText(item.type, senderName),
+                            _buildNotificationText(context, item.type, senderName),
                             const SizedBox(height: 6),
                             Text(
                               _formatTimestamp(item.timestamp),
                               style: TextStyle(
                                 fontSize: 13,
-                                color: item.isRead ? Colors.grey.shade600 : const Color(0xFF5B6CFF),
+                                color: item.isRead ? colorScheme.onSurfaceVariant : colorScheme.primary,
                                 fontWeight: item.isRead ? FontWeight.normal : FontWeight.bold,
                               ),
                             ),
@@ -156,21 +157,22 @@ class NotificationsScreen extends StatelessWidget {
   }
 
   // ودجت الحالة الفارغة بشكل جميل
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.notifications_off_outlined, size: 80, color: Colors.grey.shade300),
+          Icon(Icons.notifications_off_outlined, size: 80, color: colorScheme.onSurfaceVariant),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             'لا توجد إشعارات جديدة',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black54),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 8),
-          const Text(
+          Text(
             'عندما يتفاعل الآخرون معك ستظهر إشعاراتك هنا.',
-            style: TextStyle(fontSize: 14, color: Colors.grey),
+            style: TextStyle(fontSize: 14, color: colorScheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -225,7 +227,8 @@ class NotificationsScreen extends StatelessWidget {
   }
 
   // بناء نص الإشعار بنظام RichText لجعل اسم المرسل بالخط العريض
-  Widget _buildNotificationText(String type, String senderName) {
+  Widget _buildNotificationText(BuildContext context, String type, String senderName) {
+    final colorScheme = Theme.of(context).colorScheme;
     String actionText;
     switch (type) {
       case 'comment':
@@ -253,11 +256,11 @@ class NotificationsScreen extends StatelessWidget {
 
     return RichText(
       text: TextSpan(
-        style: const TextStyle(fontSize: 15, color: Colors.black87, fontFamily: 'Segoe UI', height: 1.4),
+        style: TextStyle(fontSize: 15, color: colorScheme.onSurface, fontFamily: 'Segoe UI', height: 1.4),
         children: [
           TextSpan(
             text: senderName, 
-            style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)
+            style: TextStyle(fontWeight: FontWeight.bold, color: colorScheme.onSurface)
           ),
           TextSpan(text: ' قام $actionText'),
         ],

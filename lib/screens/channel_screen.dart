@@ -2082,22 +2082,17 @@ class _ChannelScreenState extends State<ChannelScreen> {
     final text = _textController.text.trim();
     if (text.isEmpty) return;
 
-    if (!ChannelService.hasPermission(
-      await _channelService.getChannel(widget.channelId) ??
-          Channel(
-            id: widget.channelId,
-            name: '',
-            description: '',
-            adminId: '',
-            adminName: '',
-            imageUrl: '',
-            isActive: true,
-            createdAt: DateTime.now(),
-            updatedAt: DateTime.now(),
-          ),
-      currentUser.id,
-      'canPost',
-    )) {
+    final channel = await _channelService.getChannel(widget.channelId);
+    if (channel == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('القناة غير موجودة')),
+        );
+      }
+      return;
+    }
+
+    if (!ChannelService.hasPermission(channel, currentUser.id, 'canPost')) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('ليس لديك صلاحية نشر منشورات في هذه القناة')),
@@ -2127,11 +2122,10 @@ class _ChannelScreenState extends State<ChannelScreen> {
     }
   }
 
-  // 🔥 التعديل الجذري والعميق المتوافق 100% مع MediaService
-  Future<void> _pickAndPublishMedia(
-    BuildContext context,
-    String currentUserId, {
-    bool isVideo = false,
+  Future<void> _uploadAndPublishChannelMedia({
+    required String currentUserId,
+    required String currentUserName,
+    required bool isVideo,
   }) async {
     if (_isPublishing) return;
 
@@ -2162,97 +2156,98 @@ class _ChannelScreenState extends State<ChannelScreen> {
     if (result == null || result.files.isEmpty) return;
 
     final file = result.files.first;
+    final clientRequestId =
+        '${widget.channelId}_${DateTime.now().microsecondsSinceEpoch}';
 
     setState(() {
       _isPublishing = true;
       _uploadProgress = 0.0;
     });
-    final clientRequestId =
-        '${widget.channelId}_${DateTime.now().microsecondsSinceEpoch}';
 
     try {
-      String uploadedUrl = '';
-      String finalMediaType = isVideo ? 'video' : 'image';
-
-      if (file.bytes != null) {
-        // ✅ رفع الويب مع دعم Progress واكتشاف النوع التلقائي
-        final uploadResult = await _mediaService
-            .uploadBytesWithResultAndProgress(
+      final uploadResult = file.bytes != null
+          ? await _mediaService.uploadBytesWithResultAndProgress(
               file.bytes!,
               file.name,
               isVideo: isVideo,
               onProgress: (progress) {
-                if (mounted)
+                if (mounted) {
                   setState(() => _uploadProgress = progress.percentComplete);
+                }
               },
-            );
+            )
+          : file.path != null
+              ? await _mediaService.uploadXFileWithResult(
+                  XFile(file.path!),
+                  isVideo: isVideo,
+                  onProgress: (progress) {
+                    if (mounted) {
+                      setState(() => _uploadProgress = progress.percentComplete);
+                    }
+                  },
+                )
+              : const MediaUploadResult(
+                  success: false,
+                  error: 'لا يوجد ملف صالح للاستخدام',
+                );
 
-        if (!uploadResult.success ||
-            uploadResult.url == null ||
-            uploadResult.url!.isEmpty) {
-          throw Exception(uploadResult.error ?? 'فشل الرفع');
-        }
-        uploadedUrl = uploadResult.url!;
-        finalMediaType = isVideo ? 'video' : 'image';
-      } else if (file.path != null) {
-        // ✅ رفع الموبايل باستخدام XFile مع مؤشر الرفع والاستفادة من ذكاء الخدمة
-        final localXFile = XFile(file.path!);
-        final uploadResult = await _mediaService.uploadXFileWithResult(
-          localXFile,
-          isVideo: isVideo,
-          onProgress: (progress) {
-            if (mounted)
-              setState(() => _uploadProgress = progress.percentComplete);
-          },
-        );
-
-        if (!uploadResult.success ||
-            uploadResult.url == null ||
-            uploadResult.url!.isEmpty) {
-          throw Exception(uploadResult.error ?? 'فشل الرفع عبر المحرك');
-        }
-        uploadedUrl = uploadResult.url!;
-        finalMediaType = isVideo ? 'video' : 'image';
-      } else {
-        throw Exception('لا يوجد مسار للملف');
+      if (!uploadResult.success ||
+          uploadResult.url == null ||
+          uploadResult.url!.trim().isEmpty) {
+        throw Exception(uploadResult.error ?? 'فشل رفع الوسائط');
       }
 
-      final uploadedUri = Uri.tryParse(uploadedUrl.trim());
+      final uploadedUrl = uploadResult.url!.trim();
+      final uploadedUri = Uri.tryParse(uploadedUrl);
       if (uploadedUri == null ||
           uploadedUri.scheme != 'https' ||
           uploadedUri.host.isEmpty) {
         throw Exception('استجابة الرفع لا تحتوي رابطًا صالحًا');
       }
 
-      // ✅ النشر النهائي في القناة
       await _channelService.publishMessage(
         channelId: widget.channelId,
         senderId: currentUserId,
-        senderName:
-            context.read<AuthProvider>().currentUser?.username ?? 'admin',
+        senderName: currentUserName,
         text: _textController.text.trim(),
         mediaUrl: uploadedUrl,
-        mediaType: finalMediaType, // 🔥 استخدام النوع الحقيقي المكتشف
+        mediaType: isVideo ? 'video' : 'image',
         clientRequestId: clientRequestId,
       );
 
       _textController.clear();
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('تم نشر المحتوى بنجاح')));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('تم نشر المحتوى بنجاح')));
+      }
     } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('فشل رفع المحتوى: $error')));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('فشل رفع المحتوى: $error')));
+      }
     } finally {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _isPublishing = false;
           _uploadProgress = 0.0;
         });
+      }
     }
+  }
+
+  Future<void> _pickAndPublishMedia(
+    BuildContext context,
+    String currentUserId, {
+    bool isVideo = false,
+  }) async {
+    final currentUser = context.read<AuthProvider>().currentUser;
+    await _uploadAndPublishChannelMedia(
+      currentUserId: currentUserId,
+      currentUserName: currentUser?.username ?? 'admin',
+      isVideo: isVideo,
+    );
   }
 }
 

@@ -908,11 +908,16 @@ class ChannelService {
     final resolvedSenderName = senderName.trim().isNotEmpty
         ? senderName.trim()
         : (currentUser.email ?? 'مستخدم');
+    final normalizedText = text.trim();
+    final normalizedMediaUrl = mediaUrl.trim();
+    final normalizedMediaType = mediaType.trim().isEmpty
+        ? (normalizedMediaUrl.isNotEmpty ? 'image' : 'text')
+        : mediaType.trim().toLowerCase();
 
     validateChannelPostPayload(
-      text: text,
-      mediaUrl: mediaUrl,
-      mediaType: mediaType,
+      text: normalizedText,
+      mediaUrl: normalizedMediaUrl,
+      mediaType: normalizedMediaType,
     );
 
     final channelDoc = await _firestore.collection('channels').doc(safeChannelId).get();
@@ -943,9 +948,9 @@ class ChannelService {
       channelId: safeChannelId,
       senderId: resolvedSenderId,
       senderName: resolvedSenderName,
-      text: text,
-      mediaUrl: mediaUrl,
-      mediaType: mediaType,
+      text: normalizedText,
+      mediaUrl: normalizedMediaUrl,
+      mediaType: normalizedMediaType,
       thumbnailUrl: thumbnailUrl,
       parentMessageId: '',
       reactions: const {},
@@ -963,7 +968,7 @@ class ChannelService {
       }.where((value) => value.trim().isNotEmpty).toList();
 
       await NotificationService().sendChannelPostNotification(
-        channelId: channelId,
+        channelId: safeChannelId,
         postId: messageReference.id,
         channelName: channel.name,
         senderId: resolvedSenderId,

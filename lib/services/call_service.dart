@@ -21,7 +21,7 @@ class CallSession {
   final String type;
   String currentMediaType;
   final bool isCaller;
-  final bool isReceiverOnline;
+  bool isReceiverOnline;
   final RTCPeerConnection peerConnection;
   final MediaStream localStream;
   MediaStream? remoteStream;
@@ -88,8 +88,8 @@ class CallSession {
     if (status == 'ended' ||
         status == 'rejected' ||
         status == 'canceled' ||
-      status == 'missed' ||
-      status == 'failed') {
+        status == 'missed' ||
+        status == 'failed') {
       endedAt ??= DateTime.now();
     }
     _statusController.add(status);
@@ -243,9 +243,7 @@ class CallSession {
 
       final track = videoTracks.first;
       await Helper.switchCamera(track);
-      currentFacingMode = currentFacingMode == 'user'
-          ? 'environment'
-          : 'user';
+      currentFacingMode = currentFacingMode == 'user' ? 'environment' : 'user';
       _videoTrack = track;
     } finally {
       _mediaSwitchInProgress = false;
@@ -412,10 +410,7 @@ class CallService {
         session.isConnected = true;
         await updateCallStatus(callId: session.callId, status: 'connected');
         if (session.isCaller) {
-          await _upsertCallRecord(
-            session: session,
-            status: 'connected',
-          );
+          await _upsertCallRecord(session: session, status: 'connected');
         }
       } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
           state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
@@ -456,17 +451,6 @@ class CallService {
       localStream = await _getUserMedia(video: safeType == 'video');
       peerConnection = await _createPeerConnection();
 
-      bool isOnline = false;
-      try {
-        final userDoc = await _firestore
-            .collection('users')
-            .doc(safeReceiverId)
-            .get();
-        if (userDoc.exists) {
-          isOnline = userDoc.data()?['isOnline'] ?? false;
-        }
-      } catch (_) {}
-
       final session = await _prepareSession(
         callId: callDocRef.id,
         chatId: safeChatId,
@@ -476,7 +460,7 @@ class CallService {
         receiverName: receiverName,
         type: safeType,
         isCaller: true,
-        isReceiverOnline: isOnline,
+        isReceiverOnline: false,
         localStream: localStream,
         peerConnection: peerConnection,
       );
@@ -634,10 +618,7 @@ class CallService {
       session?.isEnding = true;
       await updateCallStatus(callId: callId, status: terminalStatus);
       if (session != null) {
-        await _finalizeCallRecord(
-          session: session,
-          status: terminalStatus,
-        );
+        await _finalizeCallRecord(session: session, status: terminalStatus);
       } else {
         await _finalizeCallWithoutSession(callId, terminalStatus);
       }
@@ -875,16 +856,12 @@ class CallService {
         type: 'missed_call',
         referenceId: session.callId,
         roomId: session.chatId,
-        notificationKey:
-            'missed_call:${session.callId}:${session.receiverId}',
+        notificationKey: 'missed_call:${session.callId}:${session.receiverId}',
       );
     }
   }
 
-  Future<void> _finalizeCallWithoutSession(
-    String callId,
-    String status,
-  ) async {
+  Future<void> _finalizeCallWithoutSession(String callId, String status) async {
     final snapshot = await _firestore.collection('calls').doc(callId).get();
     final data = snapshot.data();
     if (data == null) return;

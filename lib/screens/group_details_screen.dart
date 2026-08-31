@@ -1,10 +1,16 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../models/group.dart';
 import '../models/group_post.dart';
 import '../providers/auth_provider.dart';
 import '../services/group_service.dart';
+import '../widgets/media_preview.dart';
 
 class GroupDetailsScreen extends StatefulWidget {
   final String groupId;
@@ -19,6 +25,14 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
   final GroupService _groupService = GroupService();
   final TextEditingController _postController = TextEditingController();
   bool _isPosting = false;
+  Uint8List? _selectedMediaBytes;
+  String? _selectedMediaPath;
+  String _selectedMediaName = '';
+  String _selectedMediaType = 'none';
+  double _uploadProgress = 0;
+
+  bool get _hasSelectedMedia =>
+      _selectedMediaBytes != null || _selectedMediaPath != null;
 
   Future<List<String>> _pendingJoinRequests(String groupId) {
     return _groupService.pendingJoinRequests(groupId);
@@ -51,6 +65,50 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
     super.dispose();
   }
 
+  Future<void> _pickMedia({required bool isVideo}) async {
+    if (_isPosting) return;
+
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: isVideo ? FileType.video : FileType.image,
+        allowCompression: true,
+        withData: kIsWeb,
+      );
+      if (result == null || result.files.isEmpty) return;
+
+      final file = result.files.first;
+      final path = file.path?.trim();
+      if (file.bytes == null && (path == null || path.isEmpty)) {
+        throw Exception('تعذر الوصول إلى الملف المختار');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _selectedMediaBytes = file.bytes;
+        _selectedMediaPath = path;
+        _selectedMediaName = file.name.trim();
+        _selectedMediaType = isVideo ? 'video' : 'image';
+      });
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر اختيار الوسائط: $error')),
+        );
+      }
+    }
+  }
+
+  void _clearSelectedMedia({bool force = false}) {
+    if (_isPosting && !force) return;
+    setState(() {
+      _selectedMediaBytes = null;
+      _selectedMediaPath = null;
+      _selectedMediaName = '';
+      _selectedMediaType = 'none';
+      _uploadProgress = 0;
+    });
+  }
+
   Future<void> _toggleMembership(Group group) async {
     final userId = context.read<AuthProvider>().currentUser?.id;
     if (userId == null) return;
@@ -74,7 +132,7 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
 
   Future<void> _publishPost(String groupId) async {
     final text = _postController.text.trim();
-    if (text.isEmpty) {
+    if (text.isEmpty && !_hasSelectedMedia) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('اكتب نصًا أو أضف وسائط للنشر')),
       );
@@ -83,8 +141,37 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
 
     setState(() => _isPosting = true);
     try {
-      await _groupService.createPost(groupId: groupId, text: text);
+      var mediaUrl = '';
+      var mediaType = 'none';
+      if (_hasSelectedMedia) {
+        final uploadResult = await _groupService.uploadGroupMedia(
+          bytes: _selectedMediaBytes,
+          file: _selectedMediaPath == null
+              ? null
+              : XFile(_selectedMediaPath!),
+          fileName: _selectedMediaName,
+          isVideo: _selectedMediaType == 'video',
+          onProgress: (progress) {
+            if (mounted) {
+              setState(() => _uploadProgress = progress.percentComplete);
+            }
+          },
+        );
+        if (!uploadResult.success || (uploadResult.url ?? '').trim().isEmpty) {
+          throw Exception(uploadResult.error ?? 'فشل رفع الوسائط');
+        }
+        mediaUrl = uploadResult.url!.trim();
+        mediaType = _selectedMediaType;
+      }
+
+      await _groupService.createPost(
+        groupId: groupId,
+        text: text,
+        mediaUrl: mediaUrl,
+        mediaType: mediaType,
+      );
       _postController.clear();
+      _clearSelectedMedia(force: true);
       if (mounted) setState(() {});
     } catch (error) {
       if (mounted) {
@@ -93,7 +180,12 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() => _isPosting = false);
+      if (mounted) {
+        setState(() {
+          _isPosting = false;
+          _uploadProgress = 0;
+        });
+      }
     }
   }
 
@@ -355,27 +447,75 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(18),
                   ),
-                  child: Row(
+                  child: Column(
                     children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _postController,
-                          decoration: const InputDecoration(
-                            hintText: 'اكتب منشورًا للمجموعة...',
-                            border: InputBorder.none,
-                          ),
+                      if (_hasSelectedMedia) ...[
+                        Row(
+                          children: [
+                            Icon(
+                              _selectedMediaType == 'video'
+                                  ? Icons.video_file_outlined
+                                  : Icons.image_outlined,
+                              color: const Color(0xFF5B6CFF),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _selectedMediaName.isEmpty
+                                    ? 'تم اختيار الوسائط'
+                                    : _selectedMediaName,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: 'إزالة الوسائط',
+                              onPressed: _isPosting ? null : _clearSelectedMedia,
+                              icon: const Icon(Icons.close_rounded),
+                            ),
+                          ],
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton(
-                        onPressed: _isPosting ? null : () => _publishPost(group.id),
-                        child: _isPosting
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Text('نشر'),
+                        if (_isPosting)
+                          LinearProgressIndicator(value: _uploadProgress),
+                      ],
+                      Row(
+                        children: [
+                          IconButton(
+                            tooltip: 'إضافة صورة',
+                            onPressed: _isPosting
+                                ? null
+                                : () => _pickMedia(isVideo: false),
+                            icon: const Icon(Icons.image_outlined),
+                          ),
+                          IconButton(
+                            tooltip: 'إضافة فيديو',
+                            onPressed: _isPosting
+                                ? null
+                                : () => _pickMedia(isVideo: true),
+                            icon: const Icon(Icons.video_library_outlined),
+                          ),
+                          Expanded(
+                            child: TextField(
+                              controller: _postController,
+                              decoration: const InputDecoration(
+                                hintText: 'اكتب منشورًا للمجموعة...',
+                                border: InputBorder.none,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            onPressed: _isPosting
+                                ? null
+                                : () => _publishPost(group.id),
+                            child: _isPosting
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Text('نشر'),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -442,6 +582,17 @@ class _GroupDetailsScreenState extends State<GroupDetailsScreen> {
                               if (post.text.isNotEmpty) ...[
                                 const SizedBox(height: 10),
                                 Text(post.text, style: const TextStyle(height: 1.5)),
+                              ],
+                              if (post.mediaUrl.isNotEmpty) ...[
+                                const SizedBox(height: 10),
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: MediaPreview(
+                                    mediaPath: post.mediaUrl,
+                                    mediaType: post.mediaType,
+                                    showControls: post.mediaType == 'video',
+                                  ),
+                                ),
                               ],
                               const SizedBox(height: 8),
                               Text(

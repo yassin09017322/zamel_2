@@ -6,7 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/post.dart';
 import '../models/app_user.dart'; // تم إضافة استدعاء موديل المستخدم
-import '../models/category_model.dart';
 import '../services/category_service.dart';
 import 'settings_provider.dart';
 
@@ -22,36 +21,45 @@ class FeedProvider extends ChangeNotifier {
   bool isLoading = false;
   bool isLoadingMore = false;
   bool hasMore = true;
+  bool hasCompletedInitialLoad = false;
   String? errorMessage;
   String? _activeCategoryId;
   String? _activeResolvedCategoryId;
   Set<String> _excludedPostIds = <String>{};
   Set<String> _reducedCategoryIds = <String>{};
+  int _loadGeneration = 0;
 
-  Future<void> loadFirstPage({String? categoryId, AppUser? currentUser}) async {
+  Future<void> loadFirstPage({
+    String? categoryId,
+    AppUser? currentUser,
+    bool preserveExistingPosts = false,
+  }) async {
     debugPrint('🟠 PROVIDER: loadFirstPage() START - categoryId=$categoryId, userId=${currentUser?.id}');
-    if (isLoading) {
-      debugPrint('🟠 PROVIDER: Already loading, returning early');
-      return;
-    }
-
+    final generation = ++_loadGeneration;
     isLoading = true;
+    isLoadingMore = false;
+    hasCompletedInitialLoad = false;
     errorMessage = null;
     _activeCategoryId = normalizeCategoryFilter(categoryId);
     _activeResolvedCategoryId = null;
     _lastDocument = null;
     hasMore = true;
-    posts = <Post>[];
+    if (!preserveExistingPosts) {
+      posts = <Post>[];
+    }
     debugPrint('🟠 PROVIDER: Set isLoading=true, posts.clear(), notifying...');
     notifyListeners();
 
     try {
       debugPrint('🟠 PROVIDER: Calling _loadUserFilters()');
-      await _loadUserFilters(currentUser);
+      await _loadUserFilters(currentUser, generation: generation);
+      if (generation != _loadGeneration) return;
       debugPrint('🟠 PROVIDER: _loadUserFilters() complete');
       
       debugPrint('🟠 PROVIDER: Calling _resolveCategoryId()');
-      _activeResolvedCategoryId = await _resolveCategoryId(_activeCategoryId);
+      final resolvedCategoryId = await _resolveCategoryId(_activeCategoryId);
+      if (generation != _loadGeneration) return;
+      _activeResolvedCategoryId = resolvedCategoryId;
       debugPrint('🟠 PROVIDER: _resolveCategoryId() complete, resolved=$_activeResolvedCategoryId');
       
       if (_activeCategoryId != 'all' && _activeResolvedCategoryId == null) {
@@ -65,15 +73,21 @@ class FeedProvider extends ChangeNotifier {
         currentUser: currentUser,
         categoryId: _activeResolvedCategoryId,
         append: false,
+        generation: generation,
       );
       debugPrint('🟠 PROVIDER: _loadPage() complete, posts.length=${posts.length}');
     } catch (error) {
       debugPrint('🟠 PROVIDER: CAUGHT ERROR: $error');
-      errorMessage = error.toString();
+      if (generation == _loadGeneration) {
+        errorMessage = error.toString();
+      }
     } finally {
-      isLoading = false;
-      debugPrint('🟠 PROVIDER: loadFirstPage() FINALLY - setting isLoading=false, posts.length=${posts.length}');
-      notifyListeners();
+      if (generation == _loadGeneration) {
+        isLoading = false;
+        hasCompletedInitialLoad = true;
+        debugPrint('🟠 PROVIDER: loadFirstPage() FINALLY - setting isLoading=false, posts.length=${posts.length}');
+        notifyListeners();
+      }
       debugPrint('🟠 PROVIDER: loadFirstPage() END');
     }
   }
@@ -84,6 +98,7 @@ class FeedProvider extends ChangeNotifier {
     }
 
     isLoadingMore = true;
+    final generation = _loadGeneration;
     errorMessage = null;
     notifyListeners();
 
@@ -92,23 +107,33 @@ class FeedProvider extends ChangeNotifier {
         currentUser: currentUser,
         categoryId: _activeResolvedCategoryId,
         append: true,
+        generation: generation,
       );
     } catch (error) {
-      errorMessage = error.toString();
+      if (generation == _loadGeneration) {
+        errorMessage = error.toString();
+      }
     } finally {
-      isLoadingMore = false;
-      notifyListeners();
+      if (generation == _loadGeneration) {
+        isLoadingMore = false;
+        notifyListeners();
+      }
     }
   }
 
   Future<void> refresh({String? categoryId, AppUser? currentUser}) async {
-    await loadFirstPage(categoryId: categoryId, currentUser: currentUser);
+    await loadFirstPage(
+      categoryId: categoryId,
+      currentUser: currentUser,
+      preserveExistingPosts: true,
+    );
   }
 
   Future<void> _loadPage({
     required AppUser? currentUser,
     required String? categoryId,
     required bool append,
+    required int generation,
   }) async {
     debugPrint('🟡 LOADPAGE: START - categoryId=$categoryId, append=$append, _lastDocument=${_lastDocument != null}');
     Query<Map<String, dynamic>> query = firestore
@@ -132,6 +157,7 @@ class FeedProvider extends ChangeNotifier {
       const Duration(seconds: 15),
       onTimeout: () => throw TimeoutException('Firestore query timeout after 15 seconds'),
     );
+    if (generation != _loadGeneration) return;
     debugPrint('🟡 LOADPAGE: Firestore returned ${snapshot.docs.length} documents');
     
     if (snapshot.docs.length < pageSize) hasMore = false;
@@ -143,7 +169,9 @@ class FeedProvider extends ChangeNotifier {
     }
 
     _lastDocument = snapshot.docs.last;
-    final existingIds = posts.map((post) => post.id).toSet();
+    final existingIds = append
+      ? posts.map((post) => post.id).toSet()
+      : <String>{};
     debugPrint('🟡 LOADPAGE: Parsing ${snapshot.docs.length} documents...');
     final nextPosts = snapshot.docs
         .map(Post.fromFirestore)
@@ -164,7 +192,10 @@ class FeedProvider extends ChangeNotifier {
     debugPrint('🟡 LOADPAGE: END');
   }
 
-  Future<void> _loadUserFilters(AppUser? currentUser) async {
+  Future<void> _loadUserFilters(
+    AppUser? currentUser, {
+    required int generation,
+  }) async {
     _excludedPostIds = <String>{};
     _reducedCategoryIds = <String>{};
     final userId = currentUser?.id.trim() ?? '';
@@ -176,6 +207,7 @@ class FeedProvider extends ChangeNotifier {
           .doc(userId)
           .get()
           .timeout(const Duration(seconds: 10));
+        if (generation != _loadGeneration) return;
       final userData = userSnapshot.data();
       if (userData == null) return;
       _excludedPostIds.addAll(_stringList(userData['hiddenPostIds']));
@@ -184,25 +216,23 @@ class FeedProvider extends ChangeNotifier {
       );
     } catch (error) {
       debugPrint('Feed user filters unavailable: $error');
-      _excludedPostIds = <String>{};
-      _reducedCategoryIds = <String>{};
+      if (generation == _loadGeneration) {
+        _excludedPostIds = <String>{};
+        _reducedCategoryIds = <String>{};
+      }
     }
   }
 
   Future<String?> _resolveCategoryId(String? categoryId) async {
     if (categoryId == null || categoryId == 'all') return null;
-    try {
-      final categories = await CategoryService.fetchCategories().timeout(
-        const Duration(seconds: 10),
-        onTimeout: () => <CategoryModel>[],
-      );
-      return SettingsProvider.resolveCategoryIdForFeedMode(
-        categoryId,
-        categories.map((category) => category.id),
-      );
-    } catch (e) {
-      return null;
-    }
+    final categories = await CategoryService.fetchCategories().timeout(
+      const Duration(seconds: 10),
+      onTimeout: () => throw TimeoutException('Category query timeout'),
+    );
+    return SettingsProvider.resolveCategoryIdForFeedMode(
+      categoryId,
+      categories.map((category) => category.id),
+    );
   }
 
   static String normalizeCategoryFilter(String? categoryId) {

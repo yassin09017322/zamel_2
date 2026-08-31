@@ -1,6 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 
@@ -38,8 +41,12 @@ class _CallScreenState extends State<CallScreen> {
   StreamSubscription<MediaStream?>? _remoteStreamSubscription;
   StreamSubscription<String>? _statusSubscription;
   StreamSubscription<String>? _mediaTypeSubscription;
+  StreamSubscription<DatabaseEvent>? _presenceSubscription;
 
   bool _isRinging = false;
+  bool _ringbackAllowed = true;
+  bool _presenceResolved = false;
+  bool? _ringbackOnline;
 
   @override
   void initState() {
@@ -54,7 +61,7 @@ class _CallScreenState extends State<CallScreen> {
 
     // Ringback belongs to the caller; incoming ringing is owned by CallKit.
     if (widget.session.isCaller) {
-      _playRingtone();
+      _listenToRecipientPresence();
     }
 
     _remoteStreamSubscription = widget.session.remoteStreamStream.listen((
@@ -63,6 +70,7 @@ class _CallScreenState extends State<CallScreen> {
       if (!mounted) return;
       _remoteRenderer.srcObject = stream;
       if (stream != null) {
+        _ringbackAllowed = false;
         _stopRingtone();
         setState(() {
           _connectionStatus = 'متصل';
@@ -80,6 +88,7 @@ class _CallScreenState extends State<CallScreen> {
       }
 
       if (normalized == 'connected') {
+        _ringbackAllowed = false;
         _stopRingtone();
 
         if (!_isConnected) {
@@ -93,12 +102,14 @@ class _CallScreenState extends State<CallScreen> {
           _connectionStatus = 'متصل';
         });
       } else if (normalized == 'accepted') {
+        _ringbackAllowed = false;
         _stopRingtone();
         setState(() {
           _connectionStatus = 'جارٍ تهيئة الاتصال...';
         });
       } else if (normalized == 'calling' || normalized == 'ringing') {
-        if (widget.session.isCaller) _playRingtone();
+        _ringbackAllowed = true;
+        if (widget.session.isCaller && _presenceResolved) _playRingtone();
         setState(() {
           _connectionStatus = 'جارٍ الاتصال...';
         });
@@ -107,6 +118,7 @@ class _CallScreenState extends State<CallScreen> {
           normalized == 'canceled' ||
           normalized == 'missed' ||
           normalized == 'failed') {
+        _ringbackAllowed = false;
         _stopRingtone();
         setState(() {
           _connectionStatus = 'تم إنهاء المكالمة';
@@ -125,32 +137,72 @@ class _CallScreenState extends State<CallScreen> {
     // تم إزالة استدعاء _startCallTimer() من هنا حتى لا يبدأ العد قبل الرد
   }
 
-  void _playRingtone() {
-    if (!_isRinging) {
-      _isRinging = true;
+  void _listenToRecipientPresence() {
+    final recipientId = widget.session.receiverId.trim();
+    if (recipientId.isEmpty) return;
+    _presenceSubscription = FirebaseDatabase.instance
+        .ref('presence/$recipientId')
+        .onValue
+        .listen((event) {
+          if (!mounted ||
+              !widget.session.isCaller ||
+              _isConnected ||
+              !_ringbackAllowed) {
+            return;
+          }
+          final value = event.snapshot.value;
+          final data = value is Map ? value : const <dynamic, dynamic>{};
+          final isOnline = data['online'] == true;
+          _presenceResolved = true;
+          if (widget.session.isReceiverOnline == isOnline &&
+              _ringbackOnline == isOnline) {
+            return;
+          }
+          widget.session.isReceiverOnline = isOnline;
+          _playRingtone();
+        });
+  }
 
-      // التعديل 2: محاكاة صوت "طوط... طوط..." للمتصل
-      if (widget.session.isReceiverOnline) {
-        _playOfflineBeep(); // نغمة أولى
-        _offlineRingTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-          if (_isRinging) {
+  void _playRingtone() {
+    if (!widget.session.isCaller ||
+        _isConnected ||
+        !_ringbackAllowed ||
+        !_presenceResolved) {
+      return;
+    }
+    final isOnline = widget.session.isReceiverOnline;
+    if (_isRinging && _ringbackOnline == isOnline) return;
+
+    _stopRingtone();
+    _isRinging = true;
+    _ringbackOnline = isOnline;
+
+    if (isOnline) {
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        _playOfflineBeep();
+        _offlineRingTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+          if (_isRinging && _ringbackOnline == true) {
             _playOfflineBeep();
           } else {
             timer.cancel();
           }
         });
       } else {
-        // الطرف الآخر غير متصل: رنين متقطع أبطأ
-        _playOfflineBeep();
-        _offlineRingTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-          if (_isRinging) {
-            _playOfflineBeep();
-          } else {
-            timer.cancel();
-          }
-        });
+        unawaited(
+          FlutterRingtonePlayer().playRingtone(volume: 0.3, looping: true),
+        );
       }
+      return;
     }
+
+    _playOfflineBeep();
+    _offlineRingTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (_isRinging && _ringbackOnline == false) {
+        _playOfflineBeep();
+      } else {
+        timer.cancel();
+      }
+    });
   }
 
   void _playOfflineBeep() {
@@ -164,6 +216,7 @@ class _CallScreenState extends State<CallScreen> {
   void _stopRingtone() {
     if (_isRinging) {
       _isRinging = false;
+      _ringbackOnline = null;
       _offlineRingTimer?.cancel();
       FlutterRingtonePlayer().stop();
     }
@@ -236,9 +289,9 @@ class _CallScreenState extends State<CallScreen> {
       if (mounted) setState(() {});
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('تعذر تبديل الكاميرا: $error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('تعذر تبديل الكاميرا: $error')));
       }
     } finally {
       if (mounted) setState(() => _isSwitchingCamera = false);
@@ -308,6 +361,7 @@ class _CallScreenState extends State<CallScreen> {
     _remoteStreamSubscription?.cancel();
     _statusSubscription?.cancel();
     _mediaTypeSubscription?.cancel();
+    _presenceSubscription?.cancel();
     _localRenderer.srcObject = null;
     _remoteRenderer.srcObject = null;
     _localRenderer.dispose();
@@ -496,7 +550,7 @@ class _CallScreenState extends State<CallScreen> {
                   ),
                   _CallActionButton(
                     icon: _speakerEnabled ? Icons.volume_up : Icons.volume_off,
-                    color: _speakerEnabled ? Colors.blue : Colors.white,
+                    color: _speakerEnabled ? Colors.blue : Colors.amber,
                     onPressed: _toggleSpeaker,
                   ),
                   // الزر المسؤول عن التبديل بين الكاميرا والصوت (الترقية / التخفيض)
@@ -563,9 +617,7 @@ class _MuteCallButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final label = isEnabled ? 'كتم الميكروفون' : 'تشغيل الميكروفون';
-    final backgroundColor = isEnabled
-      ? Colors.blue
-      : const Color(0xFFC62828);
+    final backgroundColor = isEnabled ? Colors.blue : const Color(0xFFC62828);
 
     return Semantics(
       button: true,

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/story.dart';
 import '../providers/auth_provider.dart';
@@ -26,21 +27,33 @@ class FeedScreen extends StatefulWidget {
   State<FeedScreen> createState() => _FeedScreenState();
 }
 
-class _FeedScreenState extends State<FeedScreen> {
+class _FeedScreenState extends State<FeedScreen>
+  with WidgetsBindingObserver {
+  static const _backgroundTimestampKey = 'main_feed_background_timestamp';
+  static const _refreshAfter = Duration(minutes: 20);
+
   final StoryService _storyService = StoryService();
   final ImagePicker _picker = ImagePicker();
   final ScrollController _feedScrollController = ScrollController();
   final Set<String> _hiddenStoryUsers = <String>{};
   String? _feedKey;
+  DateTime? _backgroundedAt;
+  bool _lifecycleRefreshInFlight = false;
+  bool _lifecycleObserverRegistered = false;
 
   @override
   void initState() {
     super.initState();
     _feedScrollController.addListener(_handleFeedScroll);
+    WidgetsBinding.instance.addObserver(this);
+    _lifecycleObserverRegistered = true;
   }
 
   @override
   void dispose() {
+    if (_lifecycleObserverRegistered) {
+      WidgetsBinding.instance.removeObserver(this);
+    }
     _feedScrollController.dispose();
     super.dispose();
   }
@@ -49,14 +62,64 @@ class _FeedScreenState extends State<FeedScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     debugPrint('🔵 FEED: didChangeDependencies() called');
-    _loadFeedForCurrentContext();
   }
 
-  void _loadFeedForCurrentContext() {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      if (_backgroundedAt != null) return;
+      unawaited(_saveBackgroundTimestamp());
+    } else if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshIfBackgroundedLongEnough());
+    }
+  }
+
+  Future<void> _saveBackgroundTimestamp() async {
+    _backgroundedAt = DateTime.now();
+    final preferences = await SharedPreferences.getInstance();
+    await preferences.setInt(
+      _backgroundTimestampKey,
+      _backgroundedAt!.millisecondsSinceEpoch,
+    );
+  }
+
+  Future<void> _refreshIfBackgroundedLongEnough() async {
+    if (_lifecycleRefreshInFlight) return;
+    _lifecycleRefreshInFlight = true;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final timestamp = _backgroundedAt?.millisecondsSinceEpoch ??
+          preferences.getInt(_backgroundTimestampKey);
+      if (timestamp == null) return;
+
+      await preferences.remove(_backgroundTimestampKey);
+      _backgroundedAt = null;
+      final backgroundedAt = DateTime.fromMillisecondsSinceEpoch(timestamp);
+      if (DateTime.now().difference(backgroundedAt) < _refreshAfter || !mounted) {
+        return;
+      }
+
+      final authProvider = context.read<AuthProvider>();
+      if (authProvider.isLoading || authProvider.currentUser == null) return;
+      await context.read<FeedProvider>().refresh(
+            categoryId: context.read<SettingsProvider>().feedMode,
+            currentUser: authProvider.currentUser,
+          );
+    } finally {
+      _lifecycleRefreshInFlight = false;
+    }
+  }
+
+  void _loadFeedForCurrentContext({
+    required FeedProvider feedProvider,
+    required AuthProvider authProvider,
+    required String selectedMode,
+  }) {
     debugPrint('🔵 FEED: _loadFeedForCurrentContext() entered');
-    final feedProvider = context.read<FeedProvider>();
-    final authProvider = context.read<AuthProvider>();
-    
     debugPrint('🔵 FEED: authProvider.isLoading=${authProvider.isLoading}');
     debugPrint('🔵 FEED: currentUser=${authProvider.currentUser?.id}');
     
@@ -66,7 +129,6 @@ class _FeedScreenState extends State<FeedScreen> {
       return;
     }
     
-    final selectedMode = context.watch<SettingsProvider>().feedMode;
     final feedKey = '${selectedMode}:${authProvider.currentUser?.id ?? ''}';
     debugPrint('🔵 FEED: Generated feedKey=$feedKey, previous _feedKey=$_feedKey');
     if (_feedKey == feedKey) {
@@ -780,6 +842,13 @@ class _FeedScreenState extends State<FeedScreen> {
   Widget build(BuildContext context) {
     final feedProvider = Provider.of<FeedProvider>(context);
     final authProvider = context.watch<AuthProvider>();
+    final selectedMode = context.watch<SettingsProvider>().feedMode;
+
+    _loadFeedForCurrentContext(
+      feedProvider: feedProvider,
+      authProvider: authProvider,
+      selectedMode: selectedMode,
+    );
 
     debugPrint('🔵 FEED BUILD: isLoading=${feedProvider.isLoading}, posts.length=${feedProvider.posts.length}, isLoadingMore=${feedProvider.isLoadingMore}, errorMessage=${feedProvider.errorMessage}');
 
@@ -862,7 +931,9 @@ class _FeedScreenState extends State<FeedScreen> {
               const SizedBox(height: 8),
               Builder(
                 builder: (context) {
-                  if (feedProvider.isLoading && feedProvider.posts.isEmpty) {
+                    if ((!feedProvider.hasCompletedInitialLoad ||
+                        feedProvider.isLoading) &&
+                      feedProvider.posts.isEmpty) {
                     return const Padding(
                       padding: EdgeInsets.all(40.0),
                       child: Center(
@@ -922,7 +993,7 @@ class _FeedScreenState extends State<FeedScreen> {
                       height: 24,
                     ),
                     itemBuilder: (context, index) =>
-                        PostCard(post: posts[index]),
+                        PostCard(post: posts[index], isMainFeed: true),
                       ),
                       if (feedProvider.isLoadingMore)
                         const Padding(

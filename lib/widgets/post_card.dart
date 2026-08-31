@@ -15,11 +15,13 @@ import '../services/post_service.dart';
 import '../services/post_translation_service.dart';
 import 'comment_section.dart';
 import 'media_preview.dart';
+import 'main_feed_video_player.dart';
 
 class PostCard extends StatefulWidget {
   final Post post;
+  final bool isMainFeed;
 
-  const PostCard({super.key, required this.post});
+  const PostCard({super.key, required this.post, this.isMainFeed = false});
 
   @override
   State<PostCard> createState() => _PostCardState();
@@ -1088,12 +1090,14 @@ class _PostCardState extends State<PostCard>
     if (mediaView.length == 1) {
       final item = mediaView.first;
       if (item.mediaType == 'video') {
-        return MediaPreview(
-          mediaPath: item.url,
-          mediaType: 'video',
-          enableAudio: true,
-          showControls: true,
-        );
+        return widget.isMainFeed
+            ? MainFeedVideoPlayer(url: item.url)
+            : MediaPreview(
+                mediaPath: item.url,
+                mediaType: 'video',
+                enableAudio: true,
+                showControls: true,
+              );
       }
 
       return ClipRRect(
@@ -1133,12 +1137,14 @@ class _PostCardState extends State<PostCard>
       itemBuilder: (context, index) {
         final item = mediaView[index];
         if (item.mediaType == 'video') {
-          return MediaPreview(
-            mediaPath: item.url,
-            mediaType: 'video',
-            enableAudio: true,
-            showControls: true,
-          );
+          return widget.isMainFeed
+              ? MainFeedVideoPlayer(url: item.url)
+              : MediaPreview(
+                  mediaPath: item.url,
+                  mediaType: 'video',
+                  enableAudio: true,
+                  showControls: true,
+                );
         }
 
         return ClipRRect(
@@ -1304,231 +1310,6 @@ class _PostCardState extends State<PostCard>
                             onReply: (comment) => setModalState(
                               () => replyToComment = comment,
                             ),
-                          );
-                          return ListView.builder(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 8,
-                            ),
-                            itemCount: comments.length,
-                            itemBuilder: (context, index) {
-                              final comment = comments[index];
-                              final isAudio =
-                                  comment.type == 'audio' ||
-                                  comment.audioUrl.isNotEmpty ||
-                                  comment.text.startsWith('[AUDIO]');
-
-                              return Card(
-                                elevation: 0,
-                                color: Colors.grey[50],
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                child: ListTile(
-                                  leading: CircleAvatar(
-                                    radius: 16,
-                                    backgroundColor: const Color(
-                                      0xFF5B6CFF,
-                                    ).withAlpha(51),
-                                    child: Text(
-                                      comment.username[0].toUpperCase(),
-                                      style: const TextStyle(
-                                        color: Color(0xFF5B6CFF),
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                  title: GestureDetector(
-                                    onTap: () => Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                        builder: (_) => ProfileScreen(
-                                          userId: comment.userId,
-                                        ),
-                                      ),
-                                    ),
-                                    child: Text(
-                                      comment.username,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                  ),
-                                  subtitle: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      const SizedBox(height: 4),
-                                      if (comment.replyToUsername.isNotEmpty)
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                            bottom: 6,
-                                          ),
-                                          child: Text(
-                                            'رد على ${comment.replyToUsername}',
-                                            style: const TextStyle(
-                                              color: Colors.grey,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ),
-                                      if (isAudio)
-                                        InkWell(
-                                          onTap: () async {
-                                            try {
-                                              await _toggleAudioPlayback(
-                                                comment,
-                                              );
-                                            } catch (error) {
-                                              if (mounted) {
-                                                ScaffoldMessenger.of(
-                                                  context,
-                                                ).showSnackBar(
-                                                  SnackBar(
-                                                    content: Text(
-                                                      'تعذر تشغيل الصوت: $error',
-                                                    ),
-                                                  ),
-                                                );
-                                              }
-                                            }
-                                          },
-                                          child: Container(
-                                            margin: const EdgeInsets.only(
-                                              top: 4,
-                                              bottom: 4,
-                                            ),
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                              vertical: 8,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: const Color(
-                                                0xFF5B6CFF,
-                                              ).withAlpha(26),
-                                              borderRadius:
-                                                  BorderRadius.circular(20),
-                                            ),
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Row(
-                                                  mainAxisSize:
-                                                      MainAxisSize.min,
-                                                  children: [
-                                                    Icon(
-                                                      _activeAudioUrl ==
-                                                                  comment
-                                                                      .audioUrl &&
-                                                              _isAudioPlaying
-                                                          ? Icons
-                                                                .pause_circle_filled
-                                                          : Icons
-                                                                .play_circle_fill,
-                                                      color: const Color(
-                                                        0xFF5B6CFF,
-                                                      ),
-                                                      size: 30,
-                                                    ),
-                                                    const SizedBox(width: 8),
-                                                    Expanded(
-                                                      child: ClipRRect(
-                                                        borderRadius:
-                                                            BorderRadius.circular(
-                                                              999,
-                                                            ),
-                                                        child: LinearProgressIndicator(
-                                                          value:
-                                                              _activeAudioUrl ==
-                                                                  comment
-                                                                      .audioUrl
-                                                              ? (_audioPosition
-                                                                            .inMilliseconds /
-                                                                        (comment.duration >
-                                                                                0
-                                                                            ? comment.duration *
-                                                                                  1000
-                                                                            : 30000))
-                                                                    .clamp(
-                                                                      0.0,
-                                                                      1.0,
-                                                                    )
-                                                              : 0.0,
-                                                          minHeight: 6,
-                                                          backgroundColor:
-                                                              Colors.white,
-                                                          valueColor:
-                                                              const AlwaysStoppedAnimation<
-                                                                Color
-                                                              >(
-                                                                Color(
-                                                                  0xFF5B6CFF,
-                                                                ),
-                                                              ),
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ],
-                                                ),
-                                                const SizedBox(height: 6),
-                                                Text(
-                                                  _activeAudioUrl ==
-                                                          comment.audioUrl
-                                                      ? '${_formatDuration(_audioPosition)} / ${_formatDuration(Duration(seconds: comment.duration > 0 ? comment.duration : 30))}'
-                                                      : (comment.duration > 0
-                                                            ? '0:00 / ${_formatDuration(Duration(seconds: comment.duration))}'
-                                                            : '0:00 / 0:30'),
-                                                  style: const TextStyle(
-                                                    color: Color(0xFF5B6CFF),
-                                                    fontWeight: FontWeight.bold,
-                                                    fontSize: 12,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        )
-                                      else
-                                        Text(
-                                          comment.text,
-                                          style: const TextStyle(
-                                            color: Colors.black87,
-                                          ),
-                                        ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        _formatCommentTime(comment.timestamp),
-                                        style: const TextStyle(
-                                          fontSize: 11,
-                                          color: Colors.grey,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      TextButton(
-                                        onPressed: () => setModalState(
-                                          () => replyToComment = comment,
-                                        ),
-                                        style: TextButton.styleFrom(
-                                          foregroundColor: const Color(
-                                            0xFF5B6CFF,
-                                          ),
-                                          padding: EdgeInsets.zero,
-                                          minimumSize: const Size(50, 30),
-                                          tapTargetSize:
-                                              MaterialTapTargetSize.shrinkWrap,
-                                        ),
-                                        child: const Text(
-                                          'رد',
-                                          style: TextStyle(fontSize: 12),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
                           );
                         },
                       ),

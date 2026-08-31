@@ -30,6 +30,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     final authProvider = context.watch<AuthProvider>();
     final currentUser = authProvider.currentUser;
+    final colorScheme = Theme.of(context).colorScheme;
 
     if (currentUser == null) {
       return const Center(child: Text('الرجاء تسجيل الدخول لعرض الدردشات'));
@@ -78,7 +79,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
               return ListTile(
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                tileColor: Colors.grey[100],
+                tileColor: colorScheme.surfaceContainerHighest,
                 title: Text(otherName.isNotEmpty ? otherName : 'محادثة'),
                 subtitle: otherUserId.isNotEmpty
                     ? StreamBuilder<DatabaseEvent>(
@@ -99,7 +100,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(statusText, style: TextStyle(fontSize: 12, color: online ? Colors.green : Colors.grey[700])),
+                              Text(statusText, style: TextStyle(fontSize: 12, color: online ? Colors.green : colorScheme.onSurfaceVariant)),
                               const SizedBox(height: 2),
                               Text(room.lastMessage.isEmpty ? 'ابدأ المحادثة الآن' : room.lastMessage, maxLines: 1, overflow: TextOverflow.ellipsis),
                             ],
