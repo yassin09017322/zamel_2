@@ -1,0 +1,8 @@
+{
+    "cmake.sourceDirectory": "C:/Users/yassin/Downloads/zamel_2/windows",
+    "cmake.configureOnOpen": true,
+    "cmake.buildDirectory": "${workspaceFolder}/.cmake-build",
+    "cmake.configureSettings": {
+        "CMAKE_TRY_COMPILE_TARGET_TYPE": "STATIC_LIBRARY"
+    }
+}

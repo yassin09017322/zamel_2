@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "272988590091",
+    "project_id": "yassin0",
+    "storage_bucket": "yassin0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:272988590091:android:74c1d7e9c705735c47f70e",
+        "android_client_info": {
+          "package_name": "com.example.zamel_2"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "272988590091-ri7qdohp3edel04r599pftndn24t1ugu.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA0wQmzDlfBrNHjxahW9sgZ_7HEkpUYEsE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "272988590091-ri7qdohp3edel04r599pftndn24t1ugu.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
