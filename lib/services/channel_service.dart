@@ -28,7 +28,9 @@ class ChannelService {
     final resolvedSenderName = senderName.trim().isNotEmpty
         ? senderName.trim()
         : 'مستخدم';
-    final resolvedMediaType = mediaType.trim().isEmpty ? 'text' : mediaType.trim();
+    final resolvedMediaType = mediaType.trim().isEmpty
+        ? 'text'
+        : mediaType.trim();
 
     return {
       'channelId': channelId,
@@ -209,15 +211,19 @@ class ChannelService {
       throw Exception('المستخدم غير مسجل دخول');
     }
 
-    final channelSnapshot =
-        await _firestore.collection('channels').doc(channelId).get();
+    final channelSnapshot = await _firestore
+        .collection('channels')
+        .doc(channelId)
+        .get();
     final channelData = channelSnapshot.data();
     if (channelData == null) {
       throw Exception('القناة غير موجودة');
     }
 
-    final userSnapshot =
-        await _firestore.collection('users').doc(currentUser.uid).get();
+    final userSnapshot = await _firestore
+        .collection('users')
+        .doc(currentUser.uid)
+        .get();
     final isAppAdmin = userSnapshot.data()?['role'] == 'admin';
     final moderators = List<String>.from(channelData['moderators'] ?? const []);
     final isChannelManager =
@@ -235,10 +241,14 @@ class ChannelService {
       }
     }
 
-    await _firestore.collection('channels').doc(channelId).update({
-      'imageUrl': normalizedUrl,
-      'updatedAt': FieldValue.serverTimestamp(),
-    }).timeout(_channelImageWriteTimeout);
+    await _firestore
+        .collection('channels')
+        .doc(channelId)
+        .update({
+          'imageUrl': normalizedUrl,
+          'updatedAt': FieldValue.serverTimestamp(),
+        })
+        .timeout(_channelImageWriteTimeout);
   }
 
   static bool isUserInMemberList(List<dynamic>? values, String userId) {
@@ -266,34 +276,38 @@ class ChannelService {
     final safeUserId = userId.trim();
     if (safeUserId.isEmpty) return;
     final ref = _firestore.collection('channels').doc(channelId);
-    await _firestore.runTransaction((transaction) async {
-      final snapshot = await transaction.get(ref);
-      if (!snapshot.exists) return;
-      final data = snapshot.data() ?? {};
-      final members = <String>[];
-      final currentMembers = List<dynamic>.from(data['memberIds'] ?? const <dynamic>[]);
-      for (final value in currentMembers) {
-        if (value is String && value.trim().isNotEmpty) {
-          members.add(value.trim());
-        }
-      }
-      final guests = List<String>.from(data['guestIds'] ?? const <dynamic>[])
-        ..where((value) => value.trim().isNotEmpty)
-        .toList();
+    await _firestore
+        .runTransaction((transaction) async {
+          final snapshot = await transaction.get(ref);
+          if (!snapshot.exists) return;
+          final data = snapshot.data() ?? {};
+          final members = <String>[];
+          final currentMembers = List<dynamic>.from(
+            data['memberIds'] ?? const <dynamic>[],
+          );
+          for (final value in currentMembers) {
+            if (value is String && value.trim().isNotEmpty) {
+              members.add(value.trim());
+            }
+          }
+          final guests = List<String>.from(
+            data['guestIds'] ?? const <dynamic>[],
+          )..where((value) => value.trim().isNotEmpty).toList();
 
-      if (members.contains(safeUserId)) {
-        return;
-      }
+          if (members.contains(safeUserId)) {
+            return;
+          }
 
-      members.add(safeUserId);
-      guests.removeWhere((value) => value.trim() == safeUserId);
+          members.add(safeUserId);
+          guests.removeWhere((value) => value.trim() == safeUserId);
 
-      transaction.update(ref, {
-        'memberIds': members,
-        'guestIds': guests,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    }).timeout(_messageWriteTimeout);
+          transaction.update(ref, {
+            'memberIds': members,
+            'guestIds': guests,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        })
+        .timeout(_messageWriteTimeout);
   }
 
   Future<bool> joinChannel({
@@ -327,36 +341,46 @@ class ChannelService {
     final ref = _firestore.collection('channels').doc(channelId);
 
     try {
-      await _firestore.runTransaction((transaction) async {
-        final snapshot = await transaction.get(ref);
-        if (!snapshot.exists) return;
+      await _firestore
+          .runTransaction((transaction) async {
+            final snapshot = await transaction.get(ref);
+            if (!snapshot.exists) return;
 
-        final data = snapshot.data() ?? {};
-        final channelAdminId = (data['adminId'] as String? ?? '').trim();
-        if (channelAdminId == safeUserId) {
-          return;
-        }
+            final data = snapshot.data() ?? {};
+            final channelAdminId = (data['adminId'] as String? ?? '').trim();
+            if (channelAdminId == safeUserId) {
+              return;
+            }
 
-        final members = <String>[];
-        for (final value in List<dynamic>.from(data['memberIds'] ?? const <dynamic>[])) {
-          if (value is String && value.trim().isNotEmpty && value.trim() != safeUserId) {
-            members.add(value.trim());
-          }
-        }
+            final members = <String>[];
+            for (final value in List<dynamic>.from(
+              data['memberIds'] ?? const <dynamic>[],
+            )) {
+              if (value is String &&
+                  value.trim().isNotEmpty &&
+                  value.trim() != safeUserId) {
+                members.add(value.trim());
+              }
+            }
 
-        final guests = <String>[];
-        for (final value in List<dynamic>.from(data['guestIds'] ?? const <dynamic>[])) {
-          if (value is String && value.trim().isNotEmpty && value.trim() != safeUserId) {
-            guests.add(value.trim());
-          }
-        }
+            final guests = <String>[];
+            for (final value in List<dynamic>.from(
+              data['guestIds'] ?? const <dynamic>[],
+            )) {
+              if (value is String &&
+                  value.trim().isNotEmpty &&
+                  value.trim() != safeUserId) {
+                guests.add(value.trim());
+              }
+            }
 
-        transaction.update(ref, {
-          'memberIds': members,
-          'guestIds': guests,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }).timeout(_messageWriteTimeout);
+            transaction.update(ref, {
+              'memberIds': members,
+              'guestIds': guests,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+          })
+          .timeout(_messageWriteTimeout);
       return true;
     } catch (_) {
       return false;
@@ -375,9 +399,7 @@ class ChannelService {
   ];
 
   static Map<String, bool> defaultAdminPermissions() {
-    return {
-      for (final key in adminPermissionKeys) key: true,
-    };
+    return {for (final key in adminPermissionKeys) key: true};
   }
 
   Future<Map<String, bool>> getAdminPermissions({
@@ -406,43 +428,51 @@ class ChannelService {
     if (safeOwnerId.isEmpty || safeAdminUserId.isEmpty) return;
 
     final ref = _firestore.collection('channels').doc(channelId);
-    await _firestore.runTransaction((transaction) async {
-      final snapshot = await transaction.get(ref);
-      if (!snapshot.exists) return;
+    await _firestore
+        .runTransaction((transaction) async {
+          final snapshot = await transaction.get(ref);
+          if (!snapshot.exists) return;
 
-      final data = snapshot.data() ?? {};
-      final currentOwnerId = (data['adminId'] as String? ?? '').trim();
-      if (currentOwnerId != safeOwnerId) {
-        throw Exception('مالك القناة فقط يمكنه تعديل صلاحيات المشرفين');
-      }
+          final data = snapshot.data() ?? {};
+          final currentOwnerId = (data['adminId'] as String? ?? '').trim();
+          if (currentOwnerId != safeOwnerId) {
+            throw Exception('مالك القناة فقط يمكنه تعديل صلاحيات المشرفين');
+          }
 
-      final moderators = <String>[];
-      for (final value in List<dynamic>.from(data['moderators'] ?? const <dynamic>[])) {
-        if (value is String && value.trim().isNotEmpty) {
-          moderators.add(value.trim());
-        }
-      }
+          final moderators = <String>[];
+          for (final value in List<dynamic>.from(
+            data['moderators'] ?? const <dynamic>[],
+          )) {
+            if (value is String && value.trim().isNotEmpty) {
+              moderators.add(value.trim());
+            }
+          }
 
-      if (!moderators.contains(safeAdminUserId)) {
-        throw Exception('المستخدم المحدد ليس مشرفًا');
-      }
+          if (!moderators.contains(safeAdminUserId)) {
+            throw Exception('المستخدم المحدد ليس مشرفًا');
+          }
 
-      final normalizedPermissions = <String, bool>{};
-      for (final key in adminPermissionKeys) {
-        normalizedPermissions[key] = permissions[key] == true;
-      }
+          final normalizedPermissions = <String, bool>{};
+          for (final key in adminPermissionKeys) {
+            normalizedPermissions[key] = permissions[key] == true;
+          }
 
-      final currentPermissions = Map<String, Map<String, bool>>.from(
-        (data['adminPermissions'] as Map? ?? const {})
-            .map((key, value) => MapEntry(key.toString(), Map<String, bool>.from(value as Map? ?? const {}))),
-      );
+          final currentPermissions = Map<String, Map<String, bool>>.from(
+            (data['adminPermissions'] as Map? ?? const {}).map(
+              (key, value) => MapEntry(
+                key.toString(),
+                Map<String, bool>.from(value as Map? ?? const {}),
+              ),
+            ),
+          );
 
-      currentPermissions[safeAdminUserId] = normalizedPermissions;
-      transaction.update(ref, {
-        'adminPermissions': currentPermissions,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    }).timeout(_messageWriteTimeout);
+          currentPermissions[safeAdminUserId] = normalizedPermissions;
+          transaction.update(ref, {
+            'adminPermissions': currentPermissions,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        })
+        .timeout(_messageWriteTimeout);
   }
 
   Future<void> addModerator({
@@ -460,54 +490,60 @@ class ChannelService {
     final ref = _firestore.collection('channels').doc(channelId);
     final userRef = _firestore.collection('users').doc(safeUserId);
 
-    await _firestore.runTransaction((transaction) async {
-      final channelSnapshot = await transaction.get(ref);
-      if (!channelSnapshot.exists) return;
+    await _firestore
+        .runTransaction((transaction) async {
+          final channelSnapshot = await transaction.get(ref);
+          if (!channelSnapshot.exists) return;
 
-      final channelData = channelSnapshot.data() ?? {};
-      final ownerId = (channelData['adminId'] as String? ?? '').trim();
-      if (ownerId != currentUser.uid) {
-        throw Exception('مالك القناة فقط يمكنه إضافة المشرفين');
-      }
+          final channelData = channelSnapshot.data() ?? {};
+          final ownerId = (channelData['adminId'] as String? ?? '').trim();
+          if (ownerId != currentUser.uid) {
+            throw Exception('مالك القناة فقط يمكنه إضافة المشرفين');
+          }
 
-      final targetUserSnapshot = await transaction.get(userRef);
-      if (!targetUserSnapshot.exists) {
-        throw Exception('المستخدم المحدد غير موجود');
-      }
+          final targetUserSnapshot = await transaction.get(userRef);
+          if (!targetUserSnapshot.exists) {
+            throw Exception('المستخدم المحدد غير موجود');
+          }
 
-      if (safeUserId == ownerId) {
-        throw Exception('لا يمكن إضافة مالك القناة كـ Admin');
-      }
+          if (safeUserId == ownerId) {
+            throw Exception('لا يمكن إضافة مالك القناة كـ Admin');
+          }
 
-      final moderators = <String>[];
-      for (final value in List<dynamic>.from(channelData['moderators'] ?? const <dynamic>[])) {
-        if (value is String && value.trim().isNotEmpty) {
-          moderators.add(value.trim());
-        }
-      }
+          final moderators = <String>[];
+          for (final value in List<dynamic>.from(
+            channelData['moderators'] ?? const <dynamic>[],
+          )) {
+            if (value is String && value.trim().isNotEmpty) {
+              moderators.add(value.trim());
+            }
+          }
 
-      if (userExistsInList(moderators, safeUserId)) {
-        return;
-      }
+          if (userExistsInList(moderators, safeUserId)) {
+            return;
+          }
 
-      final members = <String>[];
-      for (final value in List<dynamic>.from(channelData['memberIds'] ?? const <dynamic>[])) {
-        if (value is String && value.trim().isNotEmpty) {
-          members.add(value.trim());
-        }
-      }
+          final members = <String>[];
+          for (final value in List<dynamic>.from(
+            channelData['memberIds'] ?? const <dynamic>[],
+          )) {
+            if (value is String && value.trim().isNotEmpty) {
+              members.add(value.trim());
+            }
+          }
 
-      if (!members.contains(safeUserId)) {
-        members.add(safeUserId);
-      }
+          if (!members.contains(safeUserId)) {
+            members.add(safeUserId);
+          }
 
-      moderators.add(safeUserId);
-      transaction.update(ref, {
-        'moderators': moderators,
-        'memberIds': members,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    }).timeout(_messageWriteTimeout);
+          moderators.add(safeUserId);
+          transaction.update(ref, {
+            'moderators': moderators,
+            'memberIds': members,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        })
+        .timeout(_messageWriteTimeout);
   }
 
   Future<void> removeMember({
@@ -547,32 +583,38 @@ class ChannelService {
     }
 
     final ref = _firestore.collection('channels').doc(channelId);
-    await _firestore.runTransaction((transaction) async {
-      final snapshot = await transaction.get(ref);
-      if (!snapshot.exists) return;
+    await _firestore
+        .runTransaction((transaction) async {
+          final snapshot = await transaction.get(ref);
+          if (!snapshot.exists) return;
 
-      final data = snapshot.data() ?? {};
-      final ownerId = (data['adminId'] as String? ?? '').trim();
-      if (ownerId != currentUser.uid) {
-        throw Exception('مالك القناة فقط يمكنه إزالة المشرفين');
-      }
+          final data = snapshot.data() ?? {};
+          final ownerId = (data['adminId'] as String? ?? '').trim();
+          if (ownerId != currentUser.uid) {
+            throw Exception('مالك القناة فقط يمكنه إزالة المشرفين');
+          }
 
-      if (safeUserId == ownerId) {
-        throw Exception('لا يمكن إزالة مالك القناة');
-      }
+          if (safeUserId == ownerId) {
+            throw Exception('لا يمكن إزالة مالك القناة');
+          }
 
-      final moderators = <String>[];
-      for (final value in List<dynamic>.from(data['moderators'] ?? const <dynamic>[])) {
-        if (value is String && value.trim().isNotEmpty && value.trim() != safeUserId) {
-          moderators.add(value.trim());
-        }
-      }
+          final moderators = <String>[];
+          for (final value in List<dynamic>.from(
+            data['moderators'] ?? const <dynamic>[],
+          )) {
+            if (value is String &&
+                value.trim().isNotEmpty &&
+                value.trim() != safeUserId) {
+              moderators.add(value.trim());
+            }
+          }
 
-      transaction.update(ref, {
-        'moderators': moderators,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    }).timeout(_messageWriteTimeout);
+          transaction.update(ref, {
+            'moderators': moderators,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        })
+        .timeout(_messageWriteTimeout);
   }
 
   static String _normalizeAccessType(String accessType, bool fallbackPrivate) {
@@ -648,19 +690,30 @@ class ChannelService {
       return const <Channel>[];
     }
 
-    final snapshot = await _firestore.collection('channels').where('isActive', isEqualTo: true).get();
+    final snapshot = await _firestore
+        .collection('channels')
+        .where('isActive', isEqualTo: true)
+        .get();
     final channels = snapshot.docs.map(Channel.fromFirestore).where((channel) {
-      final matchesCategory = category == null || category.trim().isEmpty || channel.category.toLowerCase() == category.trim().toLowerCase();
+      final matchesCategory =
+          category == null ||
+          category.trim().isEmpty ||
+          channel.category.toLowerCase() == category.trim().toLowerCase();
       if (!matchesCategory) return false;
       if (normalized.isEmpty) return true;
-      final haystack = '${channel.name} ${channel.description} ${channel.adminName} ${channel.handle} ${channel.category}'.toLowerCase();
+      final haystack =
+          '${channel.name} ${channel.description} ${channel.adminName} ${channel.handle} ${channel.category}'
+              .toLowerCase();
       return haystack.contains(normalized.toLowerCase());
     }).toList();
 
     return channels;
   }
 
-  Future<bool> isFollowingChannel({required String channelId, required String userId}) async {
+  Future<bool> isFollowingChannel({
+    required String channelId,
+    required String userId,
+  }) async {
     final safeChannelId = channelId.trim();
     final safeUserId = userId.trim();
     if (safeChannelId.isEmpty || safeUserId.isEmpty) return false;
@@ -670,45 +723,57 @@ class ChannelService {
     return channel.followerIds.contains(safeUserId);
   }
 
-  Future<bool> followChannel({required String channelId, required String userId}) async {
+  Future<bool> followChannel({
+    required String channelId,
+    required String userId,
+  }) async {
     final safeChannelId = channelId.trim();
     final safeUserId = userId.trim();
     if (safeChannelId.isEmpty || safeUserId.isEmpty) return false;
 
     final ref = _firestore.collection('channels').doc(safeChannelId);
     try {
-      await _firestore.runTransaction((transaction) async {
-        final snapshot = await transaction.get(ref);
-        if (!snapshot.exists) throw Exception('القناة غير موجودة');
+      await _firestore
+          .runTransaction((transaction) async {
+            final snapshot = await transaction.get(ref);
+            if (!snapshot.exists) throw Exception('القناة غير موجودة');
 
-        final data = snapshot.data() ?? <String, dynamic>{};
-        final followerIds = <String>[];
-        for (final value in List<dynamic>.from(data['followers'] ?? const <dynamic>[])) {
-          if (value is String && value.trim().isNotEmpty) followerIds.add(value.trim());
-        }
-        if (followerIds.contains(safeUserId)) {
-          return;
-        }
+            final data = snapshot.data() ?? <String, dynamic>{};
+            final followerIds = <String>[];
+            for (final value in List<dynamic>.from(
+              data['followers'] ?? const <dynamic>[],
+            )) {
+              if (value is String && value.trim().isNotEmpty)
+                followerIds.add(value.trim());
+            }
+            if (followerIds.contains(safeUserId)) {
+              return;
+            }
 
-        followerIds.add(safeUserId);
-        transaction.update(ref, {
-          'followers': followerIds,
-          'followersCount': followerIds.length,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }).timeout(_messageWriteTimeout);
+            followerIds.add(safeUserId);
+            transaction.update(ref, {
+              'followers': followerIds,
+              'followersCount': followerIds.length,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+          })
+          .timeout(_messageWriteTimeout);
 
       final channel = await getChannel(safeChannelId);
       if (channel != null && channel.adminId != safeUserId) {
-        await NotificationService().createNotification(
-          senderId: safeUserId,
-          receiverId: channel.adminId,
-          type: 'channel_follow',
-          referenceId: safeChannelId,
-          roomId: safeChannelId,
-          channelId: safeChannelId,
-          postId: '',
-        );
+        try {
+          await NotificationService().createNotification(
+            senderId: safeUserId,
+            receiverId: channel.adminId,
+            type: 'channel_follow',
+            referenceId: safeChannelId,
+            roomId: safeChannelId,
+            channelId: safeChannelId,
+            postId: '',
+            notificationKey:
+                'channel_follow:$safeChannelId:${channel.adminId}:$safeUserId',
+          );
+        } catch (_) {}
       }
       return true;
     } catch (_) {
@@ -716,31 +781,40 @@ class ChannelService {
     }
   }
 
-  Future<bool> unfollowChannel({required String channelId, required String userId}) async {
+  Future<bool> unfollowChannel({
+    required String channelId,
+    required String userId,
+  }) async {
     final safeChannelId = channelId.trim();
     final safeUserId = userId.trim();
     if (safeChannelId.isEmpty || safeUserId.isEmpty) return false;
 
     final ref = _firestore.collection('channels').doc(safeChannelId);
     try {
-      await _firestore.runTransaction((transaction) async {
-        final snapshot = await transaction.get(ref);
-        if (!snapshot.exists) throw Exception('القناة غير موجودة');
+      await _firestore
+          .runTransaction((transaction) async {
+            final snapshot = await transaction.get(ref);
+            if (!snapshot.exists) throw Exception('القناة غير موجودة');
 
-        final data = snapshot.data() ?? <String, dynamic>{};
-        final followerIds = <String>[];
-        for (final value in List<dynamic>.from(data['followers'] ?? const <dynamic>[])) {
-          if (value is String && value.trim().isNotEmpty && value.trim() != safeUserId) {
-            followerIds.add(value.trim());
-          }
-        }
+            final data = snapshot.data() ?? <String, dynamic>{};
+            final followerIds = <String>[];
+            for (final value in List<dynamic>.from(
+              data['followers'] ?? const <dynamic>[],
+            )) {
+              if (value is String &&
+                  value.trim().isNotEmpty &&
+                  value.trim() != safeUserId) {
+                followerIds.add(value.trim());
+              }
+            }
 
-        transaction.update(ref, {
-          'followers': followerIds,
-          'followersCount': followerIds.length,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      }).timeout(_messageWriteTimeout);
+            transaction.update(ref, {
+              'followers': followerIds,
+              'followersCount': followerIds.length,
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+          })
+          .timeout(_messageWriteTimeout);
       return true;
     } catch (_) {
       return false;
@@ -762,7 +836,8 @@ class ChannelService {
         .where((value) => value.isNotEmpty)
         .toSet();
     if (normalizedModerators.contains(safeUserId)) {
-      final explicitPermission = channel.adminPermissions[safeUserId]?[permissionKey];
+      final explicitPermission =
+          channel.adminPermissions[safeUserId]?[permissionKey];
       if (explicitPermission == false) {
         return false;
       }
@@ -851,32 +926,35 @@ class ChannelService {
         .collection('messages')
         .doc(safeMessageId);
 
-    await _firestore.runTransaction((transaction) async {
-      final snapshot = await transaction.get(messageRef);
-      if (!snapshot.exists) return;
+    await _firestore
+        .runTransaction((transaction) async {
+          final snapshot = await transaction.get(messageRef);
+          if (!snapshot.exists) return;
 
-      final data = snapshot.data() ?? <String, dynamic>{};
-      final existingViewers = <String>[];
-      for (final value in data['viewedBy'] as List<dynamic>? ?? const <dynamic>[]) {
-        if (value is String && value.trim().isNotEmpty) {
-          existingViewers.add(value.trim());
-        } else if (value is Map && value['userId'] is String) {
-          final mappedUserId = (value['userId'] as String).trim();
-          if (mappedUserId.isNotEmpty) existingViewers.add(mappedUserId);
-        }
-      }
+          final data = snapshot.data() ?? <String, dynamic>{};
+          final existingViewers = <String>[];
+          for (final value
+              in data['viewedBy'] as List<dynamic>? ?? const <dynamic>[]) {
+            if (value is String && value.trim().isNotEmpty) {
+              existingViewers.add(value.trim());
+            } else if (value is Map && value['userId'] is String) {
+              final mappedUserId = (value['userId'] as String).trim();
+              if (mappedUserId.isNotEmpty) existingViewers.add(mappedUserId);
+            }
+          }
 
-      if (existingViewers.contains(safeUserId)) {
-        return;
-      }
+          if (existingViewers.contains(safeUserId)) {
+            return;
+          }
 
-      final updatedViewers = [...existingViewers, safeUserId];
-      transaction.update(messageRef, {
-        'viewedBy': updatedViewers,
-        'viewCount': updatedViewers.length,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    }).timeout(_messageWriteTimeout);
+          final updatedViewers = [...existingViewers, safeUserId];
+          transaction.update(messageRef, {
+            'viewedBy': updatedViewers,
+            'viewCount': updatedViewers.length,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        })
+        .timeout(_messageWriteTimeout);
   }
 
   Future<void> publishMessage({
@@ -920,7 +998,10 @@ class ChannelService {
       mediaType: normalizedMediaType,
     );
 
-    final channelDoc = await _firestore.collection('channels').doc(safeChannelId).get();
+    final channelDoc = await _firestore
+        .collection('channels')
+        .doc(safeChannelId)
+        .get();
     if (!channelDoc.exists) {
       throw Exception('القناة غير موجودة');
     }
@@ -935,12 +1016,12 @@ class ChannelService {
         clientRequestId == null || clientRequestId.trim().isEmpty
         ? _firestore
               .collection('channels')
-                .doc(safeChannelId)
+              .doc(safeChannelId)
               .collection('messages')
               .doc()
         : _firestore
               .collection('channels')
-                .doc(safeChannelId)
+              .doc(safeChannelId)
               .collection('messages')
               .doc(clientRequestId.trim());
 
@@ -1020,26 +1101,30 @@ class ChannelService {
 
     final channelRef = _firestore.collection('channels').doc(channelId);
 
-    await _firestore.runTransaction((transaction) async {
-      final messageSnapshot = await transaction.get(messageRef);
-      if (!messageSnapshot.exists) return;
+    await _firestore
+        .runTransaction((transaction) async {
+          final messageSnapshot = await transaction.get(messageRef);
+          if (!messageSnapshot.exists) return;
 
-      final channelSnapshot = await transaction.get(channelRef);
-      if (channelSnapshot.exists) {
-        final pinnedMessageId = (channelSnapshot.data()?['pinnedMessageId'] as String? ?? '').trim();
-        if (pinnedMessageId == messageId.trim()) {
-          transaction.update(channelRef, {
-            'pinnedMessageId': '',
+          final channelSnapshot = await transaction.get(channelRef);
+          if (channelSnapshot.exists) {
+            final pinnedMessageId =
+                (channelSnapshot.data()?['pinnedMessageId'] as String? ?? '')
+                    .trim();
+            if (pinnedMessageId == messageId.trim()) {
+              transaction.update(channelRef, {
+                'pinnedMessageId': '',
+                'updatedAt': FieldValue.serverTimestamp(),
+              });
+            }
+          }
+
+          transaction.update(messageRef, {
+            'isDeleted': true,
             'updatedAt': FieldValue.serverTimestamp(),
           });
-        }
-      }
-
-      transaction.update(messageRef, {
-        'isDeleted': true,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    }).timeout(_messageWriteTimeout);
+        })
+        .timeout(_messageWriteTimeout);
   }
 
   // --- دالة التفاعل مع الرسائل (Reactions) ---
@@ -1110,7 +1195,9 @@ class ChannelService {
     if (currentUser == null) throw Exception('المستخدم غير مسجل دخول');
     if (text.trim().isEmpty) throw Exception('لا يمكن إرسال تعليق فارغ');
 
-    final resolvedSenderId = senderId.trim().isNotEmpty ? senderId.trim() : currentUser.uid;
+    final resolvedSenderId = senderId.trim().isNotEmpty
+        ? senderId.trim()
+        : currentUser.uid;
     final resolvedSenderName = senderName.trim().isNotEmpty
         ? senderName.trim()
         : (currentUser.email ?? 'مستخدم');
@@ -1161,7 +1248,10 @@ class ChannelService {
     final effectiveUserId = (currentUserId ?? currentUser.uid).trim();
     if (effectiveUserId.isEmpty) throw Exception('معرّف المستخدم غير صالح');
 
-    final channelDoc = await _firestore.collection('channels').doc(channelId).get();
+    final channelDoc = await _firestore
+        .collection('channels')
+        .doc(channelId)
+        .get();
     if (!channelDoc.exists) return;
 
     final channel = Channel.fromFirestore(channelDoc);
@@ -1192,14 +1282,20 @@ class ChannelService {
     });
   }
 
-  Future<void> unpinMessage({required String channelId, String? currentUserId}) async {
+  Future<void> unpinMessage({
+    required String channelId,
+    String? currentUserId,
+  }) async {
     final currentUser = _auth.currentUser;
     if (currentUser == null) throw Exception('المستخدم غير مسجل دخول');
 
     final effectiveUserId = (currentUserId ?? currentUser.uid).trim();
     if (effectiveUserId.isEmpty) throw Exception('معرّف المستخدم غير صالح');
 
-    final channelDoc = await _firestore.collection('channels').doc(channelId).get();
+    final channelDoc = await _firestore
+        .collection('channels')
+        .doc(channelId)
+        .get();
     if (!channelDoc.exists) return;
 
     final channel = Channel.fromFirestore(channelDoc);
@@ -1257,7 +1353,9 @@ class ChannelService {
         )
         .toList();
 
-    final resolvedSenderId = senderId.trim().isNotEmpty ? senderId.trim() : currentUser.uid;
+    final resolvedSenderId = senderId.trim().isNotEmpty
+        ? senderId.trim()
+        : currentUser.uid;
     final resolvedSenderName = senderName.trim().isNotEmpty
         ? senderName.trim()
         : (currentUser.email ?? 'مستخدم');

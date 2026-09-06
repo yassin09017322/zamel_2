@@ -7,8 +7,11 @@ class NotificationItem {
   final String type;
   final String referenceId;
   final String roomId;
+  final String groupId;
   final String channelId;
   final String postId;
+  final String commentId;
+  final String parentCommentId;
   final bool isRead;
   final DateTime timestamp;
 
@@ -19,13 +22,18 @@ class NotificationItem {
     required this.type,
     required this.referenceId,
     required this.roomId,
+    required this.groupId,
     required this.channelId,
     required this.postId,
+    required this.commentId,
+    required this.parentCommentId,
     required this.isRead,
     required this.timestamp,
   });
 
-  factory NotificationItem.fromFirestore(DocumentSnapshot<Map<String, dynamic>> snapshot) {
+  factory NotificationItem.fromFirestore(
+    DocumentSnapshot<Map<String, dynamic>> snapshot,
+  ) {
     final data = snapshot.data() ?? <String, dynamic>{};
     final timestampValue = data['timestamp'];
     DateTime date;
@@ -44,8 +52,11 @@ class NotificationItem {
       type: data['type'] as String? ?? 'system_alert',
       referenceId: data['referenceId'] as String? ?? '',
       roomId: data['roomId'] as String? ?? '',
+      groupId: data['groupId'] as String? ?? '',
       channelId: data['channelId'] as String? ?? '',
       postId: data['postId'] as String? ?? '',
+      commentId: data['commentId'] as String? ?? '',
+      parentCommentId: data['parentCommentId'] as String? ?? '',
       isRead: data['isRead'] as bool? ?? false,
       timestamp: date,
     );

@@ -6,6 +6,7 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/material.dart';
 import '../models/app_user.dart';
 import '../services/auth_service.dart';
+import '../services/notification_service.dart';
 
 class AuthProvider extends ChangeNotifier {
   final FirebaseAuth auth = FirebaseAuth.instance;
@@ -50,6 +51,11 @@ class AuthProvider extends ChangeNotifier {
           debugPrint('🟢 AUTH: User snapshot received, exists=${snapshot.exists}');
           if (snapshot.exists && snapshot.data() != null) {
             currentUser = AppUser.fromFirestore(snapshot.data()!, firebaseUser.uid);
+            try {
+              await NotificationService.bindAuthenticatedUser(firebaseUser);
+            } catch (error) {
+              debugPrint('Notification token binding failed: $error');
+            }
             debugPrint('🟢 AUTH: currentUser loaded=${currentUser?.id}');
             if (currentUser != null && currentUser!.isOnline != true) {
               await updateUserPresence(online: true);
@@ -163,8 +169,16 @@ class AuthProvider extends ChangeNotifier {
     isLoading = true;
     notifyListeners();
     try {
+      final userId = currentUser?.id;
       // Update presence to offline
       await updateUserPresence(online: false);
+      if (userId != null) {
+        try {
+          await NotificationService.removeAuthenticatedUser(userId);
+        } catch (error) {
+          debugPrint('Notification token removal failed: $error');
+        }
+      }
       
       // Cancel user data subscription
       await _userSubscription?.cancel();

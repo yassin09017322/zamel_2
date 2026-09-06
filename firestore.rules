@@ -1,0 +1,126 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function validCommentCreate() {
+      return signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.postId == postId
+        && request.resource.data.username is string
+        && request.resource.data.text is string
+        && request.resource.data.audioUrl is string
+        && request.resource.data.type is string
+        && request.resource.data.likesCount == 0
+        && request.resource.data.repliesCount == 0
+        && request.resource.data.isEdited == false
+        && request.resource.data.isDeleted == false
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    match /posts/{postId} {
+      allow read: if true;
+      allow create: if signedIn();
+      allow update: if signedIn() && (
+        resource.data.userId == request.auth.uid
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentsCount'])
+          && request.resource.data.commentsCount is int
+          && request.resource.data.commentsCount >= 0
+          && request.resource.data.commentsCount == resource.data.commentsCount + 1
+        )
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['commentsCount'])
+          && request.resource.data.commentsCount is int
+          && request.resource.data.commentsCount >= 0
+          && request.resource.data.commentsCount == resource.data.commentsCount - 1
+        )
+      );
+      allow delete: if signedIn() && resource.data.userId == request.auth.uid;
+
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if validCommentCreate();
+        allow update: if signedIn() && (
+          (
+            resource.data.userId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'text', 'updatedAt', 'isEdited', 'isDeleted', 'audioUrl'
+            ])
+            && request.resource.data.userId == resource.data.userId
+            && request.resource.data.postId == resource.data.postId
+            && request.resource.data.createdAt == resource.data.createdAt
+          )
+          || (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likesCount'])
+            && request.resource.data.likesCount is int
+            && request.resource.data.likesCount >= 0
+            && (
+              (
+                request.resource.data.likesCount == resource.data.get('likesCount', 0) + 1
+                && !exists(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)/likes/$(request.auth.uid))
+                && existsAfter(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)/likes/$(request.auth.uid))
+              )
+              || (
+                request.resource.data.likesCount == resource.data.get('likesCount', 0) - 1
+                && exists(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)/likes/$(request.auth.uid))
+                && !existsAfter(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)/likes/$(request.auth.uid))
+              )
+            )
+          )
+          || (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['repliesCount'])
+            && request.resource.data.repliesCount is int
+            && request.resource.data.repliesCount >= 0
+            && (
+              request.resource.data.repliesCount == resource.data.get('repliesCount', 0) + 1
+              || request.resource.data.repliesCount == resource.data.get('repliesCount', 0) - 1
+            )
+          )
+        );
+        allow delete: if false;
+
+        match /likes/{userId} {
+          allow read: if signedIn();
+          allow create: if isSelf(userId)
+            && request.resource.data.userId == request.auth.uid;
+          allow delete: if isSelf(userId);
+          allow update: if false;
+        }
+      }
+    }
+
+    match /Notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.receiverId == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.receiverId is string
+        && request.resource.data.receiverId != request.auth.uid;
+      allow update: if signedIn()
+        && resource.data.receiverId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      allow delete: if signedIn() && resource.data.receiverId == request.auth.uid;
+    }
+
+    match /NotificationEvents/{eventId} {
+      allow create: if signedIn()
+        && request.resource.data.actorUserId == request.auth.uid;
+      allow read, update, delete: if false;
+    }
+
+    match /users/{userId}/devices/{deviceId} {
+      allow read, delete: if isSelf(userId);
+      allow create, update: if isSelf(userId)
+        && request.resource.data.token is string
+        && request.resource.data.token.size() > 0;
+    }
+  }
+}

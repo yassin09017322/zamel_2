@@ -229,9 +229,15 @@ class MediaService {
     XFile file, {
     bool isVideo = false,
     Function(UploadProgress)? onProgress,
+    String? explicitFileName,
   }) async {
     final safeFileName = _sanitizeFileName(
-      _fileNameWithMimeExtension(file.name, file.mimeType, isVideo: isVideo),
+      explicitFileName ??
+          _fileNameWithMimeExtension(
+            file.name,
+            file.mimeType,
+            isVideo: isVideo,
+          ),
     );
     final mimeType = _getMimeType(safeFileName, isVideo: isVideo);
     final fileType = _detectFileType(safeFileName, isVideo: isVideo);

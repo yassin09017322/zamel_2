@@ -85,12 +85,18 @@ class UserService {
     });
     await batch.commit();
 
-    await NotificationService().createNotification(
-      senderId: currentUserId,
-      receiverId: targetUserId,
-      type: 'follow',
-      referenceId: currentUserId,
-    );
+    try {
+      await NotificationService().createNotification(
+        senderId: currentUserId,
+        receiverId: targetUserId,
+        type: 'follow',
+        referenceId: currentUserId,
+        actorUserId: currentUserId,
+        notificationKey: 'follow:$currentUserId:$targetUserId',
+      );
+    } catch (_) {
+      // Follow success must not depend on notification delivery.
+    }
   }
 
   Future<void> unfollowUser({

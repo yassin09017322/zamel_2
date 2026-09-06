@@ -17,7 +17,9 @@ import '../services/atyaaf_reel_upload_service.dart';
 import '../services/atyaaf_service.dart';
 
 class AtyaafReelsScreen extends StatefulWidget {
-  const AtyaafReelsScreen({super.key});
+  final String? initialVideoId;
+
+  const AtyaafReelsScreen({super.key, this.initialVideoId});
 
   @override
   State<AtyaafReelsScreen> createState() => _AtyaafReelsScreenState();
@@ -53,7 +55,21 @@ class _AtyaafReelsScreenState extends State<AtyaafReelsScreen> {
     await atyaafProvider.loadVideos();
     if (!mounted || atyaafProvider.videos.isEmpty) return;
 
-    await _activateVideo(0);
+    final initialIndex = widget.initialVideoId == null
+        ? 0
+        : atyaafProvider.videos.indexWhere(
+            (video) => video.id == widget.initialVideoId,
+          );
+    final targetIndex = initialIndex < 0 ? 0 : initialIndex;
+    if (targetIndex > 0) {
+      _currentIndex = targetIndex;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _pageController.hasClients) {
+          _pageController.jumpToPage(targetIndex);
+        }
+      });
+    }
+    await _activateVideo(targetIndex);
   }
 
   Future<void> _reloadVideos() async {

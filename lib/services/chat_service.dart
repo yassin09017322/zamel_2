@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/chat_room.dart';
 import '../models/chat_message.dart';
 import '../models/message.dart';
+import 'notification_service.dart';
 
 class ChatService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -103,6 +104,25 @@ class ChatService {
       'lastMessage': text,
       'lastTimestamp': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
+
+    if (receiverId.trim().isNotEmpty && receiverId.trim() != senderId.trim()) {
+      try {
+        await NotificationService().createNotification(
+          senderId: senderId,
+          receiverId: receiverId,
+          type: 'message',
+          referenceId: resolvedMessageId,
+          roomId: roomId,
+          messageId: resolvedMessageId,
+          actorName: senderName,
+          title: senderName,
+          body: text.trim().isEmpty ? 'أرسل لك مرفقاً' : text.trim(),
+          notificationKey: 'message:$roomId:$resolvedMessageId:$receiverId',
+        );
+      } catch (_) {
+        // Delivery is independent from the message write.
+      }
+    }
 
     return resolvedMessageId;
   }

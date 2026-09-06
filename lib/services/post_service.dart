@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import '../models/post.dart';
 import '../services/category_service.dart';
 import '../providers/settings_provider.dart';
+import 'notification_service.dart';
 
 class PostInteractionState {
   final bool isSaved;
@@ -85,7 +86,7 @@ class PostService {
     };
   }
 
-  static Future<void> publishPost({
+  static Future<String> publishPost({
     required String userId,
     required String username,
     required String text,
@@ -150,6 +151,7 @@ class PostService {
             'privacy': privacy,
           })
           .timeout(_publishTimeout);
+          return postDocument.id;
     } catch (error, stackTrace) {
       Error.throwWithStackTrace(
         Exception('فشل نشر المنشور: $error'),
@@ -344,6 +346,11 @@ class PostService {
           await docRef.update({
             'likes': FieldValue.arrayUnion([userId]),
           });
+          await _notifyPostOwner(
+            postId: postId,
+            postData: docSnap.data() ?? const <String, dynamic>{},
+            actorId: userId,
+          );
         }
       }
     } catch (e) {
@@ -355,9 +362,16 @@ class PostService {
     required String postId,
     required String userId,
   }) async {
-    await _firestore.collection('posts').doc(postId).update({
+    final postRef = _firestore.collection('posts').doc(postId);
+    final snapshot = await postRef.get();
+    await postRef.update({
       'likes': FieldValue.arrayUnion([userId]),
     });
+    await _notifyPostOwner(
+      postId: postId,
+      postData: snapshot.data() ?? const <String, dynamic>{},
+      actorId: userId,
+    );
   }
 
   static Future<void> removeLike({
@@ -367,6 +381,32 @@ class PostService {
     await _firestore.collection('posts').doc(postId).update({
       'likes': FieldValue.arrayRemove([userId]),
     });
+  }
+
+  static Future<void> _notifyPostOwner({
+    required String postId,
+    required Map<String, dynamic> postData,
+    required String actorId,
+  }) async {
+    final ownerId = (postData['userId'] as String? ?? '').trim();
+    if (ownerId.isEmpty || ownerId == actorId.trim()) return;
+    try {
+      final actor = await _firestore.collection('users').doc(actorId).get();
+      final actorName = actor.data()?['username'] as String? ?? 'مستخدم';
+      await NotificationService().createNotification(
+        senderId: actorId,
+        receiverId: ownerId,
+        type: 'like',
+        referenceId: postId,
+        postId: postId,
+        actorName: actorName,
+        title: actorName,
+        body: 'أعجب بمنشورك',
+        notificationKey: 'post_like:$postId:$actorId',
+      );
+    } catch (error) {
+      debugPrint('Post like notification failed: $error');
+    }
   }
 
   // 🔥 تم تسريع التفاعل هنا باستخدام الـ Dot Notation مع حماية إضافية

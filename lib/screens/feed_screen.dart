@@ -27,16 +27,14 @@ class FeedScreen extends StatefulWidget {
   State<FeedScreen> createState() => _FeedScreenState();
 }
 
-class _FeedScreenState extends State<FeedScreen>
-  with WidgetsBindingObserver {
+class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   static const _backgroundTimestampKey = 'main_feed_background_timestamp';
-  static const _refreshAfter = Duration(minutes: 20);
+  static const _refreshAfter = Duration(minutes: 5);
 
   final StoryService _storyService = StoryService();
   final ImagePicker _picker = ImagePicker();
   final ScrollController _feedScrollController = ScrollController();
   final Set<String> _hiddenStoryUsers = <String>{};
-  String? _feedKey;
   DateTime? _backgroundedAt;
   bool _lifecycleRefreshInFlight = false;
   bool _lifecycleObserverRegistered = false;
@@ -92,23 +90,21 @@ class _FeedScreenState extends State<FeedScreen>
     _lifecycleRefreshInFlight = true;
     try {
       final preferences = await SharedPreferences.getInstance();
-      final timestamp = _backgroundedAt?.millisecondsSinceEpoch ??
+      final timestamp =
+          _backgroundedAt?.millisecondsSinceEpoch ??
           preferences.getInt(_backgroundTimestampKey);
-      if (timestamp == null) return;
-
-      await preferences.remove(_backgroundTimestampKey);
-      _backgroundedAt = null;
-      final backgroundedAt = DateTime.fromMillisecondsSinceEpoch(timestamp);
-      if (DateTime.now().difference(backgroundedAt) < _refreshAfter || !mounted) {
+      if (timestamp == null) {
+        if (!mounted) return;
+        await _resumeFeed();
         return;
       }
 
-      final authProvider = context.read<AuthProvider>();
-      if (authProvider.isLoading || authProvider.currentUser == null) return;
-      await context.read<FeedProvider>().refresh(
-            categoryId: context.read<SettingsProvider>().feedMode,
-            currentUser: authProvider.currentUser,
-          );
+      await preferences.remove(_backgroundTimestampKey);
+      _backgroundedAt = null;
+      if (!mounted) {
+        return;
+      }
+      await _resumeFeed();
     } finally {
       _lifecycleRefreshInFlight = false;
     }
@@ -119,38 +115,22 @@ class _FeedScreenState extends State<FeedScreen>
     required AuthProvider authProvider,
     required String selectedMode,
   }) {
-    debugPrint('🔵 FEED: _loadFeedForCurrentContext() entered');
-    debugPrint('🔵 FEED: authProvider.isLoading=${authProvider.isLoading}');
-    debugPrint('🔵 FEED: currentUser=${authProvider.currentUser?.id}');
-    
-    // Do not start feed loading until auth initialization completes
-    if (authProvider.isLoading) {
-      debugPrint('🔵 FEED: Auth still loading, returning early');
-      return;
-    }
-    
-    final feedKey = '${selectedMode}:${authProvider.currentUser?.id ?? ''}';
-    debugPrint('🔵 FEED: Generated feedKey=$feedKey, previous _feedKey=$_feedKey');
-    if (_feedKey == feedKey) {
-      debugPrint('🔵 FEED: feedKey unchanged, returning early');
-      return;
-    }
+    unawaited(
+      feedProvider.ensureInitialized(
+        categoryId: selectedMode,
+        currentUser: authProvider.currentUser,
+      ),
+    );
+  }
 
-    _feedKey = feedKey;
-    debugPrint('🔵 FEED: Scheduling loadFirstPage with categoryId=$selectedMode');
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) {
-        debugPrint('🔵 FEED: Widget not mounted, skipping loadFirstPage');
-        return;
-      }
-      debugPrint('🔵 FEED: Calling loadFirstPage()');
-      unawaited(
-        feedProvider.loadFirstPage(
-          categoryId: selectedMode,
-          currentUser: authProvider.currentUser,
-        ),
-      );
-    });
+  Future<void> _resumeFeed() async {
+    final authProvider = context.read<AuthProvider>();
+    if (authProvider.isLoading) return;
+    await context.read<FeedProvider>().resume(
+      categoryId: context.read<SettingsProvider>().feedMode,
+      currentUser: authProvider.currentUser,
+      staleAfter: _refreshAfter,
+    );
   }
 
   void _handleFeedScroll() {
@@ -160,9 +140,7 @@ class _FeedScreenState extends State<FeedScreen>
       final feedProvider = context.read<FeedProvider>();
       final authProvider = context.read<AuthProvider>();
       unawaited(
-        feedProvider.loadNextPage(
-          currentUser: authProvider.currentUser,
-        ),
+        feedProvider.loadNextPage(currentUser: authProvider.currentUser),
       );
     }
   }
@@ -511,7 +489,7 @@ class _FeedScreenState extends State<FeedScreen>
                       ? mediaFiles.first['url']?.toString() ?? mediaData
                       : mediaData;
 
-                  await PostService.publishPost(
+                  final postId = await PostService.publishPost(
                     userId: user.id,
                     username: user.username,
                     text: text,
@@ -523,6 +501,11 @@ class _FeedScreenState extends State<FeedScreen>
                     mediaFiles: mediaFiles,
                     privacy: privacy,
                     clientRequestId: postRequestId,
+                  );
+
+                  await context.read<FeedProvider>().addPublishedPostById(
+                    postId: postId,
+                    currentUser: user,
                   );
 
                   unawaited(PostService.addPoints(user.id, 5));
@@ -850,7 +833,9 @@ class _FeedScreenState extends State<FeedScreen>
       selectedMode: selectedMode,
     );
 
-    debugPrint('🔵 FEED BUILD: isLoading=${feedProvider.isLoading}, posts.length=${feedProvider.posts.length}, isLoadingMore=${feedProvider.isLoadingMore}, errorMessage=${feedProvider.errorMessage}');
+    debugPrint(
+      '🔵 FEED BUILD: isLoading=${feedProvider.isLoading}, posts.length=${feedProvider.posts.length}, isLoadingMore=${feedProvider.isLoadingMore}, errorMessage=${feedProvider.errorMessage}',
+    );
 
     final isArabic = context.locale.languageCode == 'ar';
 
@@ -931,8 +916,8 @@ class _FeedScreenState extends State<FeedScreen>
               const SizedBox(height: 8),
               Builder(
                 builder: (context) {
-                    if ((!feedProvider.hasCompletedInitialLoad ||
-                        feedProvider.isLoading) &&
+                  if ((!feedProvider.hasCompletedInitialLoad ||
+                          feedProvider.isLoading) &&
                       feedProvider.posts.isEmpty) {
                     return const Padding(
                       padding: EdgeInsets.all(40.0),
@@ -948,9 +933,21 @@ class _FeedScreenState extends State<FeedScreen>
                     return Padding(
                       padding: const EdgeInsets.all(20.0),
                       child: Center(
-                        child: Text(
-                          'حدث خطأ\n${feedProvider.errorMessage}',
-                          textAlign: TextAlign.center,
+                        child: Column(
+                          children: [
+                            Text(
+                              'حدث خطأ\n${feedProvider.errorMessage}',
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 12),
+                            OutlinedButton(
+                              onPressed: () => feedProvider.retry(
+                                categoryId: selectedMode,
+                                currentUser: authProvider.currentUser,
+                              ),
+                              child: const Text('إعادة المحاولة'),
+                            ),
+                          ],
                         ),
                       ),
                     );
@@ -983,17 +980,17 @@ class _FeedScreenState extends State<FeedScreen>
                   return Column(
                     children: [
                       ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    padding: EdgeInsets.zero,
-                    itemCount: posts.length,
-                    separatorBuilder: (context, index) => Divider(
-                      color: Colors.grey[200],
-                      thickness: 6,
-                      height: 24,
-                    ),
-                    itemBuilder: (context, index) =>
-                        PostCard(post: posts[index], isMainFeed: true),
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        padding: EdgeInsets.zero,
+                        itemCount: posts.length,
+                        separatorBuilder: (context, index) => Divider(
+                          color: Colors.grey[200],
+                          thickness: 6,
+                          height: 24,
+                        ),
+                        itemBuilder: (context, index) =>
+                            PostCard(post: posts[index], isMainFeed: true),
                       ),
                       if (feedProvider.isLoadingMore)
                         const Padding(

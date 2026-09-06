@@ -16,6 +16,7 @@ import '../services/post_translation_service.dart';
 import 'comment_section.dart';
 import 'media_preview.dart';
 import 'main_feed_video_player.dart';
+import 'post_comments_panel.dart';
 
 class PostCard extends StatefulWidget {
   final Post post;
@@ -1164,7 +1165,7 @@ class _PostCardState extends State<PostCard>
     );
   }
 
-  void _showComments() {
+  void _showCommentsLegacy() {
     final currentUser = context.read<AuthProvider>().currentUser;
     if (currentUser == null) {
       return;
@@ -1630,6 +1631,20 @@ class _PostCardState extends State<PostCard>
       // إيقاف العداد عند قفل شاشة التعليقات
       recordTimer?.cancel();
     });
+  }
+
+  void _showComments() {
+    final currentUser = context.read<AuthProvider>().currentUser;
+    if (currentUser == null) return;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.82,
+        child: PostCommentsPanel(postId: widget.post.id, bottomSheet: true),
+      ),
+    );
   }
 
   @override

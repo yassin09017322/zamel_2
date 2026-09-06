@@ -10,8 +10,22 @@ import '../services/audio_service.dart';
 class CommentSection extends StatefulWidget {
   final List<Comment> comments;
   final void Function(Comment comment)? onReply;
+  final void Function(Comment comment)? onLike;
+  final void Function(Comment comment)? onEdit;
+  final void Function(Comment comment)? onDelete;
+  final bool Function(Comment comment)? isLiked;
+  final String? currentUserId;
 
-  const CommentSection({super.key, required this.comments, this.onReply});
+  const CommentSection({
+    super.key,
+    required this.comments,
+    this.onReply,
+    this.onLike,
+    this.onEdit,
+    this.onDelete,
+    this.isLiked,
+    this.currentUserId,
+  });
 
   @override
   State<CommentSection> createState() => _CommentSectionState();
@@ -34,7 +48,9 @@ class _CommentSectionState extends State<CommentSection> {
     });
     _stateSub = _audioService.playerStateStream.listen((state) {
       if (!mounted) return;
-      if (state == PlayerState.completed || state == PlayerState.stopped || state == PlayerState.paused) {
+      if (state == PlayerState.completed ||
+          state == PlayerState.stopped ||
+          state == PlayerState.paused) {
         setState(() {
           _isAudioPlaying = false;
           if (state == PlayerState.completed) {
@@ -94,7 +110,10 @@ class _CommentSectionState extends State<CommentSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: rootComments
-          .map((comment) => _buildCommentTree(comment, commentsByParent, <String>{}))
+          .map(
+            (comment) =>
+                _buildCommentTree(comment, commentsByParent, <String>{}),
+          )
           .toList(),
     );
   }
@@ -105,13 +124,17 @@ class _CommentSectionState extends State<CommentSection> {
     Set<String> ancestorIds,
   ) {
     final nextAncestorIds = <String>{...ancestorIds, comment.id};
-    final replies = (commentsByParent[comment.id] ?? const <Comment>[])
-        .where((reply) => !nextAncestorIds.contains(reply.id));
-    final isAudio = comment.type == 'audio' ||
+    final replies = (commentsByParent[comment.id] ?? const <Comment>[]).where(
+      (reply) => !nextAncestorIds.contains(reply.id),
+    );
+    final isAudio =
+        comment.type == 'audio' ||
         comment.audioUrl.isNotEmpty ||
         comment.text.startsWith('[AUDIO]');
     final active = _activeAudioUrl == comment.audioUrl;
-    final duration = Duration(seconds: comment.duration > 0 ? comment.duration : 30);
+    final duration = Duration(
+      seconds: comment.duration > 0 ? comment.duration : 30,
+    );
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -120,7 +143,9 @@ class _CommentSectionState extends State<CommentSection> {
         children: [
           Card(
             margin: EdgeInsets.zero,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(
@@ -132,7 +157,8 @@ class _CommentSectionState extends State<CommentSection> {
                       GestureDetector(
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => ProfileScreen(userId: comment.userId),
+                            builder: (_) =>
+                                ProfileScreen(userId: comment.userId),
                           ),
                         ),
                         child: Text(
@@ -143,26 +169,54 @@ class _CommentSectionState extends State<CommentSection> {
                       const Spacer(),
                       Text(
                         _formatTime(comment.timestamp),
-                        style: const TextStyle(color: Colors.grey, fontSize: 12),
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 12,
+                        ),
                       ),
+                      if (comment.isEdited)
+                        const Padding(
+                          padding: EdgeInsetsDirectional.only(start: 6),
+                          child: Text(
+                            '(معدل)',
+                            style: TextStyle(
+                              color: Colors.grey,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                   if (comment.replyToUsername.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.grey.shade100,
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Text(
                         'رد على ${comment.replyToUsername}',
-                        style: const TextStyle(color: Colors.grey, fontSize: 13),
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                   ],
                   const SizedBox(height: 10),
-                  if (isAudio)
+                  if (comment.isDeleted)
+                    const Text(
+                      'تم حذف هذا التعليق',
+                      style: TextStyle(
+                        color: Colors.grey,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    )
+                  else if (isAudio)
                     InkWell(
                       onTap: () async {
                         try {
@@ -177,7 +231,10 @@ class _CommentSectionState extends State<CommentSection> {
                       },
                       borderRadius: BorderRadius.circular(18),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 14,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFF5B6CFF).withOpacity(0.1),
                           borderRadius: BorderRadius.circular(18),
@@ -213,8 +270,8 @@ class _CommentSectionState extends State<CommentSection> {
                             LinearProgressIndicator(
                               value: active
                                   ? (_audioPosition.inMilliseconds /
-                                          duration.inMilliseconds)
-                                      .clamp(0.0, 1.0)
+                                            duration.inMilliseconds)
+                                        .clamp(0.0, 1.0)
                                   : 0.0,
                               backgroundColor: Colors.white,
                               valueColor: const AlwaysStoppedAnimation<Color>(
@@ -238,7 +295,10 @@ class _CommentSectionState extends State<CommentSection> {
                   else
                     Text(
                       comment.text,
-                      style: const TextStyle(color: Colors.black87, height: 1.4),
+                      style: const TextStyle(
+                        color: Colors.black87,
+                        height: 1.4,
+                      ),
                     ),
                   const SizedBox(height: 10),
                   Row(
@@ -250,6 +310,30 @@ class _CommentSectionState extends State<CommentSection> {
                         ),
                         child: const Text('رد'),
                       ),
+                      if (widget.onLike != null)
+                        TextButton.icon(
+                          onPressed: () => widget.onLike!(comment),
+                          icon: Icon(
+                            widget.isLiked?.call(comment) == true
+                                ? Icons.favorite
+                                : Icons.favorite_border,
+                            color: Colors.redAccent,
+                            size: 18,
+                          ),
+                          label: Text('${comment.likesCount}'),
+                        ),
+                      if (widget.currentUserId == comment.userId &&
+                          widget.onEdit != null)
+                        IconButton(
+                          onPressed: () => widget.onEdit!(comment),
+                          icon: const Icon(Icons.edit_outlined, size: 18),
+                        ),
+                      if (widget.currentUserId == comment.userId &&
+                          widget.onDelete != null)
+                        IconButton(
+                          onPressed: () => widget.onDelete!(comment),
+                          icon: const Icon(Icons.delete_outline, size: 18),
+                        ),
                     ],
                   ),
                 ],
@@ -261,11 +345,13 @@ class _CommentSectionState extends State<CommentSection> {
               padding: const EdgeInsetsDirectional.only(start: 20),
               child: Column(
                 children: replies
-                    .map((reply) => _buildCommentTree(
-                          reply,
-                          commentsByParent,
-                          nextAncestorIds,
-                        ))
+                    .map(
+                      (reply) => _buildCommentTree(
+                        reply,
+                        commentsByParent,
+                        nextAncestorIds,
+                      ),
+                    )
                     .toList(),
               ),
             ),

@@ -850,14 +850,17 @@ class CallService {
   }) async {
     await _upsertCallRecord(session: session, status: status);
     if (status == 'missed') {
-      await NotificationService().createNotification(
-        senderId: session.callerId,
-        receiverId: session.receiverId,
-        type: 'missed_call',
-        referenceId: session.callId,
-        roomId: session.chatId,
-        notificationKey: 'missed_call:${session.callId}:${session.receiverId}',
-      );
+      try {
+        await NotificationService().createNotification(
+          senderId: session.callerId,
+          receiverId: session.receiverId,
+          type: 'missed_call',
+          referenceId: session.callId,
+          roomId: session.chatId,
+          notificationKey:
+              'missed_call:${session.callId}:${session.receiverId}',
+        );
+      } catch (_) {}
     }
   }
 
@@ -888,14 +891,16 @@ class CallService {
       'messageId': 'call_$callId',
     });
     if (status == 'missed') {
-      await NotificationService().createNotification(
-        senderId: callerId,
-        receiverId: receiverId,
-        type: 'missed_call',
-        referenceId: callId,
-        roomId: chatId,
-        notificationKey: 'missed_call:$callId:$receiverId',
-      );
+      try {
+        await NotificationService().createNotification(
+          senderId: callerId,
+          receiverId: receiverId,
+          type: 'missed_call',
+          referenceId: callId,
+          roomId: chatId,
+          notificationKey: 'missed_call:$callId:$receiverId',
+        );
+      } catch (_) {}
     }
   }
 

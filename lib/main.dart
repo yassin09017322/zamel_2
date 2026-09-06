@@ -2,7 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart' as firestore;
 import 'package:easy_localization/easy_localization.dart';
 import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:firebase_core/firebase_core.dart' as firebase_core;
-import 'package:firebase_messaging/firebase_messaging.dart'; // تم الإضافة للإشعارات
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -29,6 +29,7 @@ import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'services/local_storage_service.dart';
 import 'services/callkit_service.dart'; // تم الإضافة لاستدعاء شاشة الاتصال
+import 'services/notification_service.dart';
 
 // تم الإضافة: هذه الدالة تعمل في الخلفية وتستقبل المكالمة والتطبيق مغلق
 @pragma('vm:entry-point')
@@ -63,17 +64,12 @@ Future<void> main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
 
-    // تم الإضافة: طلب صلاحية الإشعارات للمستخدم وتفعيل الاستماع في الخلفية
     if (!kIsWeb) {
-      await FirebaseMessaging.instance.requestPermission(
-        alert: true,
-        badge: true,
-        sound: true,
-      );
       FirebaseMessaging.onBackgroundMessage(
         _firebaseMessagingBackgroundHandler,
       );
     }
+    await NotificationService.initialize();
   } catch (error, stackTrace) {
     debugPrint('Firebase initialization failed: $error');
     debugPrint(stackTrace.toString());
@@ -108,6 +104,9 @@ Future<void> main() async {
       child: const ZamelApp(),
     ),
   );
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    NotificationService.handlePendingTap();
+  });
 }
 
 class ZamelApp extends StatelessWidget {
@@ -146,6 +145,7 @@ class ZamelApp extends StatelessWidget {
             );
 
             return MaterialApp(
+              navigatorKey: NotificationService.navigatorKey,
               debugShowCheckedModeBanner: false,
               title: 'ZAMEL',
               theme: ThemeData(

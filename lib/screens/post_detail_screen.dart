@@ -1,16 +1,10 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
 import '../models/post.dart';
-import '../models/comment.dart';
-import '../providers/auth_provider.dart';
 import '../screens/profile_screen.dart';
-import '../services/comment_service.dart';
 import '../services/post_service.dart';
-import '../services/audio_service.dart';
-import '../widgets/comment_section.dart';
 import '../widgets/media_preview.dart';
+import '../widgets/post_comments_panel.dart';
 
 class PostDetailScreen extends StatefulWidget {
   final String postId;
@@ -22,33 +16,8 @@ class PostDetailScreen extends StatefulWidget {
 }
 
 class _PostDetailScreenState extends State<PostDetailScreen> {
-  final TextEditingController _commentController = TextEditingController();
-  final CommentService _commentService = CommentService();
-  final AudioCommentService _audioService = AudioCommentService();
-
-  bool _isTyping = false;
-  bool _isRecording = false;
-  int _recordingSeconds = 0;
-  Timer? _recordTimer;
-  bool _isCanceling = false;
-  bool _isSendingComment = false;
-
-  String? _replyToCommentId;
-  String? _replyToUserId;
-  String? _replyToUsername;
-
-  @override
-  void dispose() {
-    _commentController.dispose();
-    _audioService.dispose();
-    _recordTimer?.cancel();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
-    final currentUser = context.watch<AuthProvider>().currentUser;
-
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Scaffold(
@@ -103,94 +72,15 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       ),
                       const SizedBox(height: 8),
 
-                      if (_replyToUsername != null)
-                        Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 10,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  'رد على $_replyToUsername',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF5B6CFF),
-                                  ),
-                                ),
-                              ),
-                              GestureDetector(
-                                onTap: () => setState(() {
-                                  _replyToCommentId = null;
-                                  _replyToUserId = null;
-                                  _replyToUsername = null;
-                                }),
-                                child: const Icon(
-                                  Icons.close,
-                                  size: 18,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                      StreamBuilder<List<Comment>>(
-                        stream: _commentService.commentsStream(post.id),
-                        builder: (context, commentsSnapshot) {
-                          if (commentsSnapshot.connectionState ==
-                              ConnectionState.waiting) {
-                            return const Center(
-                              child: CircularProgressIndicator(),
-                            );
-                          }
-                          if (commentsSnapshot.hasError) {
-                            return Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 20),
-                              child: Text(
-                                'تعذر تحميل التعليقات\n${commentsSnapshot.error}',
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(color: Colors.red),
-                              ),
-                            );
-                          }
-                          final comments = commentsSnapshot.data ?? [];
-                          if (comments.isEmpty) {
-                            return const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 20),
-                              child: Text(
-                                'لا توجد تعليقات بعد. كن أول من يعلق!',
-                              ),
-                            );
-                          }
-                          return CommentSection(
-                            comments: comments,
-                            onReply: (comment) {
-                              setState(() {
-                                _replyToCommentId = comment.id;
-                                _replyToUserId = comment.userId;
-                                _replyToUsername = comment.username;
-                              });
-                            },
-                          );
-                        },
+                      SizedBox(
+                        height: 560,
+                        child: PostCommentsPanel(postId: post.id),
                       ),
                       const SizedBox(height: 80),
                     ],
                   ),
                 ),
-                if (currentUser != null)
-                  _buildInteractiveCommentInput(
-                    currentUser.username,
-                    currentUser.id,
-                    post.id,
-                  ),
+                const SizedBox.shrink(),
               ],
             );
           },
@@ -299,225 +189,6 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
           ],
         ],
       ),
-    );
-  }
-
-  // --- 🔥 دالة إدخال التعليق السحرية المدمجة مع المايك (زي ما صلحناها في الدردشة والقنوات) ---
-  Widget _buildInteractiveCommentInput(
-    String username,
-    String userId,
-    String postId,
-  ) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withAlpha(13),
-            blurRadius: 10,
-            offset: const Offset(0, -5),
-          ),
-        ],
-      ),
-      child: _isRecording
-          ? Row(
-              children: [
-                const Icon(Icons.mic, color: Colors.redAccent, size: 28),
-                const SizedBox(width: 12),
-                Text(
-                  'جاري التسجيل... 00:${_recordingSeconds.toString().padLeft(2, '0')}',
-                  style: const TextStyle(
-                    color: Colors.redAccent,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
-                ),
-                const Spacer(),
-                const Text(
-                  'اسحب للإلغاء',
-                  style: TextStyle(color: Colors.grey, fontSize: 12),
-                ),
-              ],
-            )
-          : Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _commentController,
-                    onChanged: (val) =>
-                        setState(() => _isTyping = val.trim().isNotEmpty),
-                    decoration: InputDecoration(
-                      hintText: 'أضف تعليقاً كـ $username...',
-                      filled: true,
-                      fillColor: Colors.grey[100],
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(20),
-                        borderSide: BorderSide.none,
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 10,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                GestureDetector(
-                  onLongPress: _isTyping
-                      ? null
-                      : () async {
-                          final canRecord = await _audioService
-                              .checkPermission();
-                          if (!canRecord) {
-                            if (mounted)
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('صلاحية الميكروفون مطلوبة'),
-                                ),
-                              );
-                            return;
-                          }
-                          setState(() {
-                            _isRecording = true;
-                            _recordingSeconds = 0;
-                            _isCanceling = false;
-                          });
-                          await _audioService.startRecording();
-                          _recordTimer = Timer.periodic(
-                            const Duration(seconds: 1),
-                            (timer) {
-                              setState(() => _recordingSeconds++);
-                            },
-                          );
-                        },
-                  onLongPressCancel: () async {
-                    if (!_isRecording) return;
-                    _isCanceling = true;
-                    _recordTimer?.cancel();
-                    await _audioService.stopRecording();
-                    setState(() {
-                      _isRecording = false;
-                      _recordingSeconds = 0;
-                    });
-                    if (mounted)
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('تم إلغاء التسجيل')),
-                      );
-                  },
-                  onLongPressEnd: _isTyping
-                      ? null
-                      : (details) async {
-                          if (_isCanceling) return;
-                          _recordTimer?.cancel();
-                          setState(() => _isRecording = false);
-
-                          final audioPath = await _audioService.stopRecording();
-                          if (audioPath == null || audioPath.isEmpty) return;
-
-                          try {
-                            if (_isSendingComment) return;
-                            setState(() => _isSendingComment = true);
-                            final uploadResult = await _audioService
-                                .uploadAudioFile(audioPath);
-                            final uploadedUrl = uploadResult?['url'] as String?;
-                            if (uploadedUrl == null ||
-                                uploadedUrl.trim().isEmpty) {
-                              throw Exception('فشل رفع الصوت');
-                            }
-
-                            await _commentService.addComment(
-                              postId: postId,
-                              userId: userId,
-                              username: username,
-                              text: '[AUDIO]',
-                              audioUrl: uploadedUrl,
-                              type: 'audio',
-                              duration: _audioService.durationSeconds,
-                              replyToCommentId: _replyToCommentId,
-                              replyToUserId: _replyToUserId,
-                              replyToUsername: _replyToUsername,
-                              clientRequestId:
-                                  '${postId}_${DateTime.now().microsecondsSinceEpoch}',
-                            );
-                            setState(() {
-                              _replyToCommentId = null;
-                              _replyToUserId = null;
-                              _replyToUsername = null;
-                            });
-                          } catch (error) {
-                            if (mounted)
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text('فشل إرسال الصوت: $error'),
-                                ),
-                              );
-                          } finally {
-                            if (mounted)
-                              setState(() => _isSendingComment = false);
-                          }
-                        },
-                  onTap: () async {
-                    if (_isTyping) {
-                      if (_isSendingComment) return;
-                      final text = _commentController.text.trim();
-                      if (text.isEmpty) return;
-                      setState(() => _isSendingComment = true);
-                      try {
-                        await _commentService.addComment(
-                          postId: postId,
-                          userId: userId,
-                          username: username,
-                          text: text,
-                          replyToCommentId: _replyToCommentId,
-                          replyToUserId: _replyToUserId,
-                          replyToUsername: _replyToUsername,
-                          clientRequestId:
-                              '${postId}_${DateTime.now().microsecondsSinceEpoch}',
-                        );
-                        _commentController.clear();
-                        setState(() {
-                          _isTyping = false;
-                          _replyToCommentId = null;
-                          _replyToUserId = null;
-                          _replyToUsername = null;
-                        });
-                      } catch (error) {
-                        if (mounted)
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('فشل إرسال التعليق: $error'),
-                            ),
-                          );
-                      } finally {
-                        if (mounted) setState(() => _isSendingComment = false);
-                      }
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('اضغط مطولاً لتسجيل رسالة صوتية'),
-                        ),
-                      );
-                    }
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: _isTyping
-                          ? const Color(0xFF5B6CFF)
-                          : const Color(0xFF2EC7A5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      _isTyping ? Icons.send_rounded : Icons.mic,
-                      color: Colors.white,
-                      size: 22,
-                    ),
-                  ),
-                ),
-              ],
-            ),
     );
   }
 

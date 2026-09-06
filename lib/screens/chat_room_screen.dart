@@ -49,6 +49,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   final AudioCommentService _audioService = AudioCommentService();
   final MediaService _mediaService = MediaService();
   final ChatMediaStorageService _chatMediaStorage = ChatMediaStorageService();
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _messagesStream;
 
   ChatSyncRepository? _chatSyncRepository;
   final ScrollController _scrollController = ScrollController();
@@ -67,7 +68,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   bool _mediaUploadActive = false;
   bool _isInputFocused = false;
   bool _showScrollToBottom = false;
-  bool _isTextEmpty = true;
 
   bool get _hasCamera =>
       !kIsWeb &&
@@ -87,18 +87,11 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
   @override
   void initState() {
     super.initState();
+    _messagesStream = _createMessagesStream(widget.roomId);
     if (!kIsWeb) {
       _chatSyncRepository = ChatSyncRepository(roomId: widget.roomId);
       _chatSyncRepository?.start();
     }
-
-    _messageController.addListener(() {
-      if (mounted) {
-        setState(() {
-          _isTextEmpty = _messageController.text.trim().isEmpty;
-        });
-      }
-    });
 
     _scrollController.addListener(_handleScroll);
 
@@ -128,6 +121,30 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       (_) => unawaited(_cleanupExpiredDisappearingMessages()),
     );
     _loadRoomInfo();
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _createMessagesStream(
+    String roomId,
+  ) {
+    return FirebaseFirestore.instance
+        .collection('chatRooms')
+        .doc(roomId)
+        .collection('messages')
+        .orderBy('timestamp', descending: true)
+        .snapshots();
+  }
+
+  @override
+  void didUpdateWidget(covariant ChatRoomScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.roomId != widget.roomId) {
+      _messagesStream = _createMessagesStream(widget.roomId);
+      _localMediaMessages.clear();
+      _failedMediaFiles.clear();
+      _otherUserId = null;
+      _otherUserName = null;
+      _loadRoomInfo();
+    }
   }
 
   Future<void> _loadRoomInfo() async {
@@ -193,10 +210,15 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
       }
 
       final isVideo = failedMessage.mediaType == ChatMessageType.video;
+      final retryUploadFileName =
+          failedMessage.mediaType == ChatMessageType.image
+          ? _buildChatImageUploadFileName(failedMessage.fileName)
+          : null;
 
       final uploadResult = await _mediaService.uploadXFileWithResult(
         localFile,
         isVideo: isVideo,
+        explicitFileName: retryUploadFileName,
         onProgress: (progress) {
           unawaited(
             _updateUploadProgress(
@@ -346,7 +368,6 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     } else {
       _messageController.text += emoji;
     }
-    setState(() => _isTextEmpty = _messageController.text.trim().isEmpty);
   }
 
   void _toggleEmojiPicker() {
@@ -535,7 +556,8 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           }
         }
         final imageName = (webFileName ?? uploadFile.name).toLowerCase();
-        final supportedImage = imageName.endsWith('.jpg') ||
+        final supportedImage =
+            imageName.endsWith('.jpg') ||
             imageName.endsWith('.jpeg') ||
             imageName.endsWith('.png') ||
             imageName.endsWith('.gif') ||
@@ -607,9 +629,13 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     }
 
     try {
-      final fileName = getFileName().isEmpty
+      final originalFileName = getFileName();
+      final fileName = originalFileName.isEmpty
           ? '${DateTime.now().millisecondsSinceEpoch}_media_file'
-          : getFileName();
+          : originalFileName;
+      final chatUploadFileName = mediaType == ChatMessageType.image
+          ? _buildChatImageUploadFileName(fileName)
+          : null;
       if (uploadFile == null) {
         throw Exception('لم يتم العثور على ملف صالح للرفع');
       }
@@ -619,7 +645,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           kIsWeb && mediaType == ChatMessageType.image && webBytes != null
           ? await _mediaService.uploadBytesWithResultAndProgress(
               webBytes,
-              fileName,
+              chatUploadFileName ?? fileName,
               isVideo: false,
               onProgress: (progress) {
                 unawaited(
@@ -633,6 +659,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
           : await _mediaService.uploadXFileWithResult(
               uploadFile,
               isVideo: isVideo,
+              explicitFileName: chatUploadFileName,
               onProgress: (progress) {
                 unawaited(
                   _updateUploadProgress(
@@ -734,9 +761,12 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     } catch (error) {
       debugPrint('Upload error: $error');
       if (mounted) {
+        final userMessage = mediaType == ChatMessageType.image
+            ? 'تعذر رفع الصورة، يرجى التحقق من الاتصال والمحاولة مرة أخرى.'
+            : 'فشل رفع الملف: $error';
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('فشل رفع الملف: $error')));
+        ).showSnackBar(SnackBar(content: Text(userMessage)));
       }
       try {
         await _updateLocalMessageStatus(tempMessageId, MessageStatus.failed);
@@ -754,6 +784,19 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
     } finally {
       _mediaUploadActive = false;
     }
+  }
+
+  String _buildChatImageUploadFileName(String originalName) {
+    final extension = _chatImageExtension(originalName);
+    return 'chat_${DateTime.now().millisecondsSinceEpoch}_${DateTime.now().microsecond}$extension';
+  }
+
+  String _chatImageExtension(String fileName) {
+    final lowerName = fileName.toLowerCase();
+    for (final extension in const ['.jpeg', '.jpg', '.png', '.webp', '.gif']) {
+      if (lowerName.endsWith(extension)) return extension;
+    }
+    return '.jpg';
   }
 
   Future<void> _pickMedia(ImageSource source, {bool isVideo = false}) async {
@@ -1525,14 +1568,10 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
             children: [
               Expanded(
                 child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                  stream: FirebaseFirestore.instance
-                      .collection('chatRooms')
-                      .doc(widget.roomId)
-                      .collection('messages')
-                      .orderBy('timestamp', descending: true)
-                      .snapshots(),
+                  stream: _messagesStream,
                   builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
+                    if (!snapshot.hasData &&
+                        snapshot.connectionState == ConnectionState.waiting) {
                       return const Center(
                         child: CircularProgressIndicator(
                           color: Color(0xFF5B6CFF),
@@ -1540,7 +1579,7 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                       );
                     }
 
-                    if (snapshot.hasError) {
+                    if (snapshot.hasError && !snapshot.hasData) {
                       return Center(
                         child: Text(
                           'تعذر تحميل الرسائل 😢',
@@ -1823,54 +1862,53 @@ class _ChatRoomScreenState extends State<ChatRoomScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    GestureDetector(
-                      onTap: () async {
-                        if (!_isTextEmpty) {
-                          await _sendTextMessage();
-                        } else {
-                          if (_isRecording) {
-                            await _stopRecordingAndSend();
-                          } else {
-                            await _startRecording();
-                          }
-                        }
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 250),
-                        curve: Curves.easeOutBack,
-                        margin: const EdgeInsets.only(bottom: 2),
-                        padding: const EdgeInsets.all(13),
-                        decoration: BoxDecoration(
-                          color: _isTextEmpty
-                              ? (_isRecording
-                                    ? Colors.redAccent
-                                    : const Color(0xFF2EC7A5))
-                              : const Color(0xFF5B6CFF),
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color:
-                                  (_isTextEmpty
-                                          ? (_isRecording
-                                                ? Colors.redAccent
-                                                : const Color(0xFF2EC7A5))
-                                          : const Color(0xFF5B6CFF))
-                                      .withOpacity(0.3),
-                              blurRadius: 8,
-                              offset: const Offset(0, 3),
+                    ValueListenableBuilder<TextEditingValue>(
+                      valueListenable: _messageController,
+                      builder: (context, value, child) {
+                        final isTextEmpty = value.text.trim().isEmpty;
+                        final buttonColor = isTextEmpty
+                            ? (_isRecording
+                                  ? Colors.redAccent
+                                  : const Color(0xFF2EC7A5))
+                            : const Color(0xFF5B6CFF);
+                        return GestureDetector(
+                          onTap: () async {
+                            if (!isTextEmpty) {
+                              await _sendTextMessage();
+                            } else if (_isRecording) {
+                              await _stopRecordingAndSend();
+                            } else {
+                              await _startRecording();
+                            }
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 250),
+                            curve: Curves.easeOutBack,
+                            margin: const EdgeInsets.only(bottom: 2),
+                            padding: const EdgeInsets.all(13),
+                            decoration: BoxDecoration(
+                              color: buttonColor,
+                              shape: BoxShape.circle,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: buttonColor.withOpacity(0.3),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                        child: Icon(
-                          _isTextEmpty
-                              ? (_isRecording
-                                    ? Icons.stop_rounded
-                                    : Icons.mic_rounded)
-                              : Icons.send_rounded,
-                          color: Colors.white,
-                          size: 24,
-                        ),
-                      ),
+                            child: Icon(
+                              isTextEmpty
+                                  ? (_isRecording
+                                        ? Icons.stop_rounded
+                                        : Icons.mic_rounded)
+                                  : Icons.send_rounded,
+                              color: Colors.white,
+                              size: 24,
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ],
                 ),

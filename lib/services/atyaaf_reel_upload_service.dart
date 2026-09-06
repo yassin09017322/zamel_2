@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'media_service.dart';
+import 'notification_service.dart';
 
 class AtyaafReelUploadService {
   AtyaafReelUploadService({MediaService? mediaService}) : _mediaService = mediaService ?? MediaService();
@@ -52,6 +53,16 @@ class AtyaafReelUploadService {
     });
 
     onProgress(1.0);
+    try {
+      await NotificationService().createAtyafPublishEvent(
+        reelId: docRef.id,
+        actorUserId: userId,
+        actorName: username,
+        title: caption.isNotEmpty ? caption : 'محتوى جديد في أطياف',
+      );
+    } catch (_) {
+      // Publishing must not fail when notification fan-out is unavailable.
+    }
     return docRef.id;
   }
 }

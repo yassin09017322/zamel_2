@@ -28,14 +28,15 @@ class AudioCommentService {
   Uint8List? get recordedBytes => _webRecordedBytes;
 
   Stream<Duration> get positionStream => _player.onPositionChanged;
-  Stream<audioplayers.PlayerState> get playerStateStream => _player.onPlayerStateChanged;
+  Stream<audioplayers.PlayerState> get playerStateStream =>
+      _player.onPlayerStateChanged;
 
   Future<bool> checkPermission() async {
     // التعديل هنا: حماية التطبيق من التجميد في حالة الويب
     if (kIsWeb) {
       return true; // المتصفح سيتولى طلب الصلاحية تلقائياً
     }
-    
+
     final status = await Permission.microphone.request();
     return status.isGranted;
   }
@@ -58,7 +59,8 @@ class AudioCommentService {
     }
 
     final tempDir = await getTemporaryDirectory();
-    final filePath = '${tempDir.path}/comment_${DateTime.now().millisecondsSinceEpoch}.m4a';
+    final filePath =
+        '${tempDir.path}/comment_${DateTime.now().millisecondsSinceEpoch}.m4a';
     await _mobileRecorder.start(
       const RecordConfig(
         encoder: AudioEncoder.aacLc,
@@ -95,15 +97,19 @@ class AudioCommentService {
     return path;
   }
 
-  Future<Map<String, dynamic>?> uploadAudioFile(String filePath) async {
+  Future<Map<String, dynamic>?> uploadAudioFile(
+    String filePath, {
+    Function(UploadProgress)? onProgress,
+  }) async {
     if (kIsWeb) {
       final bytes = _webRecordedBytes;
       if (bytes == null || bytes.isEmpty) return null;
 
-      final uploadedUrl = await _mediaService.uploadBytes(
+      final uploadedUrl = await _mediaService.uploadBytesWithProgress(
         bytes,
         filePath.endsWith('.webm') ? 'comment.webm' : 'comment.wav',
         isVideo: false,
+        onProgress: onProgress,
       );
       return {'url': uploadedUrl};
     }
@@ -111,9 +117,10 @@ class AudioCommentService {
     final dynamic file = io.File(filePath);
     if (!await (file as dynamic).exists()) return null;
 
-    final uploadedUrl = await _mediaService.uploadFile(
+    final uploadedUrl = await _mediaService.uploadFileWithProgress(
       file,
       isVideo: false,
+      onProgress: onProgress,
     );
 
     return {'url': uploadedUrl};
