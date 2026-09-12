@@ -17,7 +17,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.zamel_2"
-        minSdk = flutter.minSdkVersion
+        minSdk = 21 // تم التعديل هنا إلى 21
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
