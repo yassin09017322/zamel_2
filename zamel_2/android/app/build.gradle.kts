@@ -1,25 +1,29 @@
 plugins {
     id("com.android.application")
     id("dev.flutter.flutter-gradle-plugin")
-    // ضفنا رقم الإصدار هنا مباشرة عشان نلزم السيرفر يحمله بدون أعذار! 👇
     id("com.google.gms.google-services") version "4.4.1"
 }
 
 android {
     namespace = "com.example.zamel_2"
-    compileSdk = 36
+    // استخدمنا إعدادات فلاتر الافتراضية عشان نمنع تعارض الـ SDKs
+    compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
+
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        // تم التغيير لـ 1.8 لتطابق متطلبات مكتبة الإشعارات الرسمية
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+        isCoreLibraryDesugaringEnabled = true
     }
 
     defaultConfig {
         applicationId = "com.example.zamel_2"
-        minSdk = flutter.minSdkVersion
-        targetSdk = 36
+        minSdk = 21
+        targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        multiDexEnabled = true
     }
 
     buildTypes {
@@ -33,10 +37,17 @@ android {
 
 kotlin {
     compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+        // تم التغيير لـ 1.8 لتطابق الجافا
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8
     }
 }
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // مكتبات الدعم الأساسية
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    implementation("androidx.multidex:multidex:2.0.1")
 }
