@@ -58,7 +58,7 @@ class NotificationService {
       iOS: DarwinInitializationSettings(),
     );
     
-    // 🔥 التعديل المتوافق مع الإصدار 22
+    // 🔥 التعديل السليم والصحيح 100% لإصدار 22
     await _localNotifications.initialize(
       initializationSettings,
       onDidReceiveNotificationResponse: (response) {
@@ -136,7 +136,6 @@ class NotificationService {
         message.data['notificationType'] ?? message.data['type'] ?? 'system';
     final channel = _channelForType(type.toString());
     
-    // 🔥 التعديل الثاني المتوافق مع الإصدار 22 للـ show
     await _localNotifications.show(
       id: _notificationId(message.data),
       title: title.toString(),
