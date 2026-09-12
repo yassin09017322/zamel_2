@@ -58,9 +58,9 @@ class NotificationService {
       iOS: DarwinInitializationSettings(),
     );
     
-    // 🔥 التعديل السليم والصحيح 100% لإصدار 22
+    // 🔥 الكود النهائي والمضبوط للإصدار 22 باستخدام settings:
     await _localNotifications.initialize(
-      initializationSettings,
+      settings: initializationSettings,
       onDidReceiveNotificationResponse: (response) {
         final data = response.payload;
         if (data == null || data.isEmpty) return;
