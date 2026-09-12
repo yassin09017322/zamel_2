@@ -56,13 +56,12 @@ class NotificationService {
     const initializationSettings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
       iOS: DarwinInitializationSettings(),
-      macOS: DarwinInitializationSettings(),
-      linux: LinuxInitializationSettings(defaultActionName: 'Open notification'),
     );
     
+    // 🔥 التعديل المتوافق مع الإصدار 22
     await _localNotifications.initialize(
       initializationSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
+      onDidReceiveNotificationResponse: (response) {
         final data = response.payload;
         if (data == null || data.isEmpty) return;
         _handleTapData(_decodePayload(data));
@@ -136,11 +135,13 @@ class NotificationService {
     final type =
         message.data['notificationType'] ?? message.data['type'] ?? 'system';
     final channel = _channelForType(type.toString());
+    
+    // 🔥 التعديل الثاني المتوافق مع الإصدار 22 للـ show
     await _localNotifications.show(
-      _notificationId(message.data),
-      title.toString(),
-      body.toString(),
-      NotificationDetails(
+      id: _notificationId(message.data),
+      title: title.toString(),
+      body: body.toString(),
+      notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
           channel.id,
           channel.name,
