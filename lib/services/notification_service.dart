@@ -56,15 +56,19 @@ class NotificationService {
     const initializationSettings = InitializationSettings(
       android: AndroidInitializationSettings('@mipmap/ic_launcher'),
       iOS: DarwinInitializationSettings(),
+      macOS: DarwinInitializationSettings(),
+      linux: LinuxInitializationSettings(defaultActionName: 'Open notification'),
     );
+    
     await _localNotifications.initialize(
-      settings: initializationSettings,
-      onDidReceiveNotificationResponse: (response) {
+      initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
         final data = response.payload;
         if (data == null || data.isEmpty) return;
         _handleTapData(_decodePayload(data));
       },
     );
+    
     final android = _localNotifications
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
@@ -133,10 +137,10 @@ class NotificationService {
         message.data['notificationType'] ?? message.data['type'] ?? 'system';
     final channel = _channelForType(type.toString());
     await _localNotifications.show(
-      id: _notificationId(message.data),
-      title: title.toString(),
-      body: body.toString(),
-      notificationDetails: NotificationDetails(
+      _notificationId(message.data),
+      title.toString(),
+      body.toString(),
+      NotificationDetails(
         android: AndroidNotificationDetails(
           channel.id,
           channel.name,
