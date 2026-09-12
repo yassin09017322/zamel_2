@@ -6,22 +6,24 @@ plugins {
 
 android {
     namespace = "com.example.zamel_2"
-    compileSdk = 36
+    // استخدمنا إعدادات فلاتر الافتراضية عشان نمنع تعارض الـ SDKs
+    compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-        // ❌ تم حذف isCoreLibraryDesugaringEnabled نهائياً
+        // تم التغيير لـ 1.8 لتطابق متطلبات مكتبة الإشعارات الرسمية
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+        isCoreLibraryDesugaringEnabled = true
     }
 
     defaultConfig {
         applicationId = "com.example.zamel_2"
-        minSdk = 26 // 🔥 الحل الجذري: رفعنا الحد الأدنى لتخطي طلبات المكتبة
-        targetSdk = 36
+        minSdk = 21
+        targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        // ❌ تم حذف multiDexEnabled لأنه لم يعد مطلوباً في API 26
+        multiDexEnabled = true
     }
 
     buildTypes {
@@ -35,7 +37,8 @@ android {
 
 kotlin {
     compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+        // تم التغيير لـ 1.8 لتطابق الجافا
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8
     }
 }
 
@@ -44,5 +47,7 @@ flutter {
 }
 
 dependencies {
-    // ❌ تم حذف سطر coreLibraryDesugaring نهائياً
+    // مكتبات الدعم الأساسية
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
+    implementation("androidx.multidex:multidex:2.0.1")
 }
