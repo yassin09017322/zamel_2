@@ -129,3 +129,4 @@ flutter:
 
 dependency_overrides:
   sqflite_android: 2.4.0
+  flutter_local_notifications: 22.3.0
